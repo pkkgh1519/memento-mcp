@@ -450,12 +450,14 @@ id와 topic 중 하나는 있어야 한다. 둘 다 있으면 id가 우선한다
 
 세션 종료 시 대화 전체를 구조화된 파편 집합으로 변환하여 영속화한다. 핵심 결정, 에러 해결, 새 절차, 미해결 질문을 각각 별도 파편으로 저장한다. summary 하나만 있어도 동작하지만, decisions/errors_resolved/new_procedures/open_questions가 있으면 각각 decision/error/procedure/fact 타입 파편으로 개별 저장된다.
 
+sessionId를 전달하면 해당 세션의 기존 파편(Redis frag:sess, Working Memory)만 종합하여 미입력 항목을 자동 채운다. summary 없이 sessionId만으로 호출 가능하다.
+
 수동 호출 외에, 세션 종료/만료/서버 셧다운 시 AutoReflect가 자동으로 실행된다. Gemini CLI가 가용하면 SessionActivityTracker의 활동 로그를 기반으로 구조화된 요약을 생성하고, CLI가 불가하면 메타데이터(소요시간, 도구 사용 통계, 파편 수) 기반의 최소 fact 파편을 생성한다. AI가 수동으로 reflect를 호출한 세션은 자동 reflect를 건너뛴다.
 
 | 파라미터 | 타입 | 필수 | 설명 |
 |---------|------|:----:|------|
-| summary | string | Y | 세션 전체 요약 텍스트 |
-| sessionId | string | | 세션 ID |
+| summary | string | | 세션 전체 요약. sessionId만 있으면 세션 파편에서 자동 생성 |
+| sessionId | string | | 세션 ID. 전달 시 같은 세션의 파편만 종합하여 reflect 수행 |
 | decisions | string[] | | 이 세션에서 확정된 기술/아키텍처 결정 목록 |
 | errors_resolved | string[] | | 해결한 에러 목록. "에러 설명 + 해결 방법" 형식 권장 |
 | new_procedures | string[] | | 이 세션에서 확립된 새 절차/워크플로우 목록 |

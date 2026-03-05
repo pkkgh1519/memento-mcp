@@ -642,12 +642,14 @@ Modifies a fragment in place. Pre-modification state is archived to `fragment_ve
 
 Converts a session summary into a structured fragment set at session termination. Each non-null list parameter generates typed fragments: `decisions` → `decision`; `errors_resolved` → `error`; `new_procedures` → `procedure`; `open_questions` → `fact`. The `summary` string is always persisted as a `fact` fragment.
 
+**Session consolidation:** When `sessionId` is provided, fragments indexed for that session (Redis `frag:sess:{sessionId}` and Working Memory) are consolidated and used to populate missing parameters. Callable with `sessionId` alone; `summary` is optional in that case.
+
 **Automatic reflection:** When a session terminates (explicit close, expiration, or server shutdown) without the agent having called `reflect`, the `AutoReflect` module triggers automatically. If Gemini CLI is available, it generates a structured summary from `SessionActivityTracker` logs (tools called, keywords searched, fragments created/accessed) and invokes `reflect` with the synthesized parameters. If Gemini CLI is unavailable, a minimal `fact` fragment summarizing the session is created, and the session is marked as "unreflected" for potential future AI-driven reflection. The `context` tool detects unreflected sessions and injects a hint into the AI's prompt.
 
 | Parameter | Type | Required | Description |
 |-----------|------|:--------:|-------------|
-| `summary` | string | Y | Free-text session summary |
-| `sessionId` | string | | Session identifier |
+| `summary` | string | | Free-text session summary. Auto-generated from session fragments when `sessionId` is provided |
+| `sessionId` | string | | Session identifier. When provided, only fragments from this session are consolidated |
 | `decisions` | string[] | | Architectural/technical decisions reached this session |
 | `errors_resolved` | string[] | | Errors resolved this session with resolution description |
 | `new_procedures` | string[] | | New procedures or workflows established this session |

@@ -180,7 +180,7 @@ hot (자주 참조됨) → warm (한동안 침묵) → cold (오래 잠듦) → 
 | `context` | 세션 시작 시 핵심 기억 로드. 이전에 reflect 안 된 세션이 있으면 알려줌 |
 | `remember` | 파편 저장. 저장 시 같은 주제의 유사 파편을 pgvector로 찾아 관계를 자동 연결 |
 | `recall` | 삼층 캐스케이드 검색 |
-| `reflect` | 세션 종료 시 경험을 파편으로 응고. 안 불러도 세션 닫힐 때 자동 실행됨 (AutoReflect) |
+| `reflect` | 세션 종료 시 경험을 파편으로 응고. sessionId만 넘겨도 세션 파편 종합. 안 불러도 세션 닫힐 때 자동 실행됨 (AutoReflect) |
 | `forget` | 파편 삭제 (해결된 에러 정리용) |
 | `link` | 파편 간 인과 관계 설정 (`caused_by`, `resolved_by` 등) |
 | `amend` | 파편 내용 수정 (ID와 관계는 보존) |

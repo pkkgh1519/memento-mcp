@@ -31,6 +31,7 @@
 ### 4. 세션 종료 및 응고 (Reflection)
 세션 종료 전 또는 주요 작업 완료 시 `reflect()`를 호출하여 세션 전체의 지식을 응고시킨다.
 - `summary`뿐만 아니라 `decisions`, `errors_resolved` 등의 필드를 채워 지식의 유형별 분리를 명확히 한다.
+- `sessionId`만 전달해도 해당 세션의 기존 파편(remember, Working Memory)을 종합하여 자동 채운다.
 
 ## 기억 저장 가이드라인 (Storage Rules)
 - **간결성**: 파편 하나는 300자를 넘지 않아야 하며, 하나의 개념만 담는다.
