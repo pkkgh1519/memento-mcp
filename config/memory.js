@@ -35,7 +35,7 @@ export const MEMORY_CONFIG = {
     decision  : 90,
     error     : 45,
     preference: 120,
-    relation  : 90,
+    relation  : 90,    // 미사용: fragment_links 테이블이 관계를 담당. 향후 제거 후보
     default   : 60
   },
   /** Reciprocal Rank Fusion 검색 설정 */
@@ -69,6 +69,18 @@ export const MEMORY_CONFIG = {
     defaultPageSize : 20,
     maxPageSize     : 50
   },
+  /** session_reflect 파편 정리 정책 */
+  reflectionPolicy: {
+    maxAgeDays       : 30,
+    maxImportance    : 0.3,
+    keepPerType      : 5,
+    maxDeletePerCycle: 30
+  },
+  /** 시맨틱 검색 설정 */
+  semanticSearch: {
+    minSimilarity: 0.2,
+    limit        : 10
+  },
   /** 파편 GC 정책 */
   gc: {
     utilityThreshold       : 0.15,
@@ -78,6 +90,10 @@ export const MEMORY_CONFIG = {
     factDecisionPolicy     : {
       importanceThreshold  : 0.2,
       orphanAgeDays        : 30
+    },
+    errorResolvedPolicy    : {
+      maxAgeDays           : 30,
+      maxImportance        : 0.3
     }
   }
 };

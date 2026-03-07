@@ -76,6 +76,7 @@ import { saveAccessStats } from "./lib/tools/index.js";
 import { shutdownPool, getPoolStats, getPrimaryPool } from "./lib/tools/db.js";
 import { redisClient } from "./lib/redis.js";
 import { getMemoryEvaluator } from "./lib/memory/MemoryEvaluator.js";
+import { MemoryManager }     from "./lib/memory/MemoryManager.js";
 
 /** Rate Limiter 인스턴스 */
 const rateLimiter          = new RateLimiter({
@@ -828,6 +829,31 @@ server.listen(PORT, () => {
 
   setInterval(() => saveAccessStats(LOG_DIR), 10 * 60 * 1000);
   console.log("Access stats: Saving every 10 minutes");
+
+  /** 기억 시스템 주기적 유지보수 (GC, 감쇠, 병합, stale 정리) */
+  const CONSOLIDATE_MS = parseInt(process.env.CONSOLIDATE_INTERVAL_MS || "21600000", 10);
+  setInterval(async () => {
+    try {
+      const mm     = MemoryManager.getInstance();
+      const result = await mm.consolidate();
+      console.log(`[Consolidate] done: expired=${result.expiredDeleted}, decay=${result.importanceDecay}, merged=${result.duplicatesMerged}`);
+    } catch (err) {
+      console.error(`[Consolidate] failed: ${err.message}`);
+    }
+  }, CONSOLIDATE_MS).unref();
+  console.log(`Consolidate: Running every ${CONSOLIDATE_MS / 3600000}h`);
+
+  /** 임베딩 백필 (30분 간격, 배치 20개) */
+  setInterval(async () => {
+    try {
+      const mm    = MemoryManager.getInstance();
+      const count = await mm.store.generateMissingEmbeddings(20);
+      if (count > 0) console.log(`[EmbeddingBackfill] Generated ${count} embeddings`);
+    } catch (err) {
+      console.error(`[EmbeddingBackfill] failed: ${err.message}`);
+    }
+  }, 30 * 60_000).unref();
+  console.log("EmbeddingBackfill: Running every 30min (batch 20)");
 
   /** Phase 2: 비동기 지식 품질 평가 워커 시작 */
   getMemoryEvaluator().start().catch(err => {
