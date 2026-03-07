@@ -801,6 +801,20 @@ server.listen(PORT, () => {
       globalEmbeddingWorker = new EmbeddingWorker();
       return globalEmbeddingWorker.start();
     })
+    .then(async () => {
+      /** GraphLinker: 임베딩 완료 시 자동 관계 생성 */
+      const { GraphLinker } = await import("./lib/memory/GraphLinker.js");
+      const graphLinker     = new GraphLinker();
+
+      globalEmbeddingWorker.on("embedding_ready", async ({ fragmentId }) => {
+        try {
+          const count = await graphLinker.linkFragment(fragmentId, "system");
+          if (count > 0) console.debug(`[GraphLinker] Linked ${count} for ${fragmentId}`);
+        } catch (err) {
+          console.warn(`[GraphLinker] Error: ${err.message}`);
+        }
+      });
+    })
     .catch(err => {
       console.error("[Startup] Failed to start EmbeddingWorker:", err.message);
     });
