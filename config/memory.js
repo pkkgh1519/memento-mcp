@@ -41,5 +41,13 @@ export const MEMORY_CONFIG = {
   rrfSearch: {
     k             : 60,   // RRF 상수 (높을수록 상위 랭크 부스트 감소)
     l1WeightFactor: 2.0   // L1(Redis) 결과 가중치 배수
+  },
+  /** 임베딩 비동기 워커 설정 */
+  embeddingWorker: {
+    batchSize   : 10,
+    intervalMs  : 5000,
+    retryLimit  : 3,
+    retryDelayMs: 2000,
+    queueKey    : "memento:embedding_queue"
   }
 };

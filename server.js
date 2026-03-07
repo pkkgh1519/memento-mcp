@@ -74,6 +74,9 @@ import { shutdownPool, getPoolStats, getPrimaryPool } from "./lib/tools/db.js";
 import { redisClient } from "./lib/redis.js";
 import { getMemoryEvaluator } from "./lib/memory/MemoryEvaluator.js";
 
+/** EmbeddingWorker 인스턴스 (서버 시작 후 초기화) */
+let globalEmbeddingWorker  = null;
+
 /**
  * HTTP 서버
  */
@@ -792,6 +795,16 @@ server.listen(PORT, () => {
     console.error("[Startup] Failed to start MemoryEvaluator:", err.message);
   });
 
+  /** 임베딩 비동기 워커 시작 */
+  import("./lib/memory/EmbeddingWorker.js")
+    .then(({ EmbeddingWorker }) => {
+      globalEmbeddingWorker = new EmbeddingWorker();
+      return globalEmbeddingWorker.start();
+    })
+    .catch(err => {
+      console.error("[Startup] Failed to start EmbeddingWorker:", err.message);
+    });
+
   /** NLI 모델 사전 로드 (cold start 방지, 비차단) */
   import("./lib/memory/NLIClassifier.js")
     .then(m => m.preloadNLI())
@@ -822,6 +835,7 @@ async function gracefulShutdown(signal) {
 
   // Phase 2: 워커 중지
   getMemoryEvaluator().stop();
+  if (globalEmbeddingWorker) globalEmbeddingWorker.stop();
 
   // DB 연결 풀 종료
   await shutdownPool();
