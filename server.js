@@ -38,15 +38,16 @@ import { sendJSON } from "./lib/compression.js";
 
 /** 세션 관리 */
 import {
-  streamableSessions,
-  legacySseSessions,
   createStreamableSession,
   validateStreamableSession,
   closeStreamableSession,
   createLegacySseSession,
   validateLegacySseSession,
   closeLegacySseSession,
-  cleanupExpiredSessions
+  cleanupExpiredSessions,
+  getSessionCounts,
+  getLegacySession,
+  getAllSessionIds
 } from "./lib/sessions.js";
 
 /** 인증 */
@@ -139,10 +140,11 @@ const server               = http.createServer(async (req, res) => {
     }
 
     // 세션 상태
+    const _sc = getSessionCounts();
     health.checks.sessions = {
-      streamable: streamableSessions.size,
-      legacy: legacySseSessions.size,
-      total: streamableSessions.size + legacySseSessions.size
+      streamable: _sc.streamable,
+      legacy:     _sc.legacy,
+      total:      _sc.total
     };
 
     const statusCode = health.status === "healthy" ? 200 : 503;
@@ -375,7 +377,7 @@ const server               = http.createServer(async (req, res) => {
     res.setHeader("Connection", "keep-alive");
 
     const sessionId          = createLegacySseSession(res);
-    const session            = legacySseSessions.get(sessionId);
+    const session            = getLegacySession(sessionId);
     session.authenticated  = isAuthenticated;
 
     console.log(`[Legacy SSE] Session created: ${sessionId}`);
@@ -657,7 +659,7 @@ const server               = http.createServer(async (req, res) => {
         res.statusCode = 200;
         res.end(JSON.stringify({
           fragments:     parseInt(fragR.rows[0].total),
-          sessions:      streamableSessions.size + legacySseSessions.size,
+          sessions:      getSessionCounts().total,
           apiCallsToday: parseInt(callR.rows[0].total),
           activeKeys:    parseInt(keyR.rows[0].total),
           uptime:        Math.floor(process.uptime()),
@@ -823,7 +825,8 @@ server.listen(PORT, () => {
 
   // 세션 수 메트릭 업데이트 (1분마다)
   setInterval(() => {
-    updateSessionCounts(streamableSessions.size, legacySseSessions.size);
+    const { streamable: _ss, legacy: _ls } = getSessionCounts();
+    updateSessionCounts(_ss, _ls);
   }, 60 * 1000);
   console.log("Metrics: Session counts updated every minute");
 
@@ -905,10 +908,11 @@ async function gracefulShutdown(signal) {
 
   // 세션 정리 (autoReflect 포함)
   console.log("[Shutdown] Closing all sessions (with auto-reflect)...");
-  for (const sessionId of streamableSessions.keys()) {
+  const { streamableIds, legacyIds } = getAllSessionIds();
+  for (const sessionId of streamableIds) {
     await closeStreamableSession(sessionId);
   }
-  for (const sessionId of legacySseSessions.keys()) {
+  for (const sessionId of legacyIds) {
     await closeLegacySseSession(sessionId);
   }
 
