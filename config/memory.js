@@ -106,7 +106,7 @@ export const MEMORY_CONFIG = {
   },
   /** 형태소 사전 및 L3 fallback 설정 */
   morphemeIndex: {
-    fallbackThreshold : 2,        // L3 결과가 이 수 이하일 때 형태소 fallback 실행
+    fallbackThreshold : 5,        // L3 결과가 이 수 이하일 때 형태소 fallback 실행
     fallbackLimit     : 5,        // fallback 최대 반환 파편 수
     minSimilarity     : 0.15,     // fallback 최소 유사도 (L3보다 낮게 설정)
     maxMorphemes      : 10,       // 쿼리에서 추출할 최대 형태소 수

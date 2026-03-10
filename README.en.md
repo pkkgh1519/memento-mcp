@@ -32,19 +32,19 @@
   <img src="https://img.shields.io/badge/auth-OAuth%202.0%20PKCE-f59e0b?style=flat" alt="Auth" />
 </p>
 
-# Memento MCP: A Fragment-Based Persistent Memory Subsystem for Stateless Language Model Agents
+# Memento MCP
 
 **[Installation Guide →](INSTALL.en.md)**
 
 ---
 
-## Abstract
+## Overview
 
-Contemporary large language model deployments operate under a fundamental architectural constraint: the absence of persistent cross-session state. Each invocation constitutes an epistemically isolated event; context established during one session cannot be recovered in subsequent interactions without explicit external persistence mechanisms. This constraint renders agents incapable of accumulating operational knowledge, tracking error resolution histories, or maintaining user-specific behavioral preferences across session boundaries.
+Memento MCP is a fragment-based persistent memory server implementing the Model Context Protocol (MCP). It gives stateless language model agents durable long-term memory that persists across session boundaries.
 
-We present **Memento MCP**, a persistent memory subsystem implementing the Model Context Protocol (MCP) specification. The system decomposes agent knowledge into discrete, typed *fragments* — atomic units of information semantically classified into six epistemic categories: `fact`, `decision`, `error`, `preference`, `procedure`, and `relation`. Fragment retrieval is implemented as a three-tier cascading search over Redis Set intersection (L1), PostgreSQL GIN-indexed array queries (L2), and pgvector HNSW approximate nearest-neighbor search (L3), with composite ranking over importance and recency dimensions. A background evaluation worker invokes the Google Gemini CLI to assess stored fragment utility asynchronously. An eleven-stage consolidation pipeline manages TTL tier transitions, importance decay, deduplication, and contradiction detection — the latter implemented as a three-stage hybrid of pgvector similarity filtering, NLI (Natural Language Inference) classification via a local mDeBERTa ONNX model, and Gemini CLI escalation for ambiguous cases. Session termination triggers automatic reflection that converts session activity into structured fragments. The `remember` operation proactively creates typed edges to semantically related fragments via direct pgvector cosine similarity queries. Row-Level Security at the PostgreSQL layer enforces agent-scoped isolation without application-layer filtering overhead.
+Agent knowledge is decomposed into discrete, typed **fragments** — atomic units of 1–3 sentences classified into six categories: `fact`, `decision`, `error`, `preference`, `procedure`, and `relation`. Retrieval uses a three-tier cascade: Redis Set intersection (L1), PostgreSQL GIN-indexed array queries (L2), and pgvector HNSW cosine similarity (L3), with composite ranking over importance and recency. A background worker evaluates fragment quality via Gemini CLI. A consolidation pipeline handles TTL tier transitions, importance decay, deduplication, and contradiction detection (pgvector similarity filtering → NLI classification via mDeBERTa ONNX → Gemini CLI escalation for ambiguous cases). Session termination triggers automatic reflection that converts session activity into structured fragments.
 
-The server exposes eleven MCP tools, supports protocol versions 2024-11-05 through 2025-11-25, implements both Streamable HTTP and Legacy SSE transports, and provides OAuth 2.0 PKCE authentication. Default listening port is 57332.
+The server exposes 12 MCP tools, supports MCP protocol versions 2024-11-05 through 2025-11-25, implements both Streamable HTTP and Legacy SSE transports, and provides OAuth 2.0 PKCE authentication. Default port: 57332.
 
 ---
 
@@ -54,30 +54,24 @@ The server exposes eleven MCP tools, supports protocol versions 2024-11-05 throu
 2. System Architecture
 3. Persistence Layer: Schema Design and Indexing
 4. Retrieval Architecture: The Three-Tier Cascade
-   - 4.6 Performance Characteristics
 5. Fragment Lifecycle: TTL Model and Scope Semantics
 6. MCP Tool Interface
 7. Asynchronous Quality Evaluation: MemoryEvaluator
-8. Consolidation Pipeline: MemoryConsolidator (11-stage, NLI + Gemini CLI hybrid)
+8. Consolidation Pipeline: MemoryConsolidator
 9. Fault Tolerance and Degradation Behavior
 10. Configuration
 11. Deployment
 12. Endpoint Reference
-13. References
 
 ---
 
 ## 1. Introduction
 
-The statelessness problem in deployed language model systems is well-characterized. Unlike recurrent architectures that maintain hidden state across time steps, transformer-based models operating in a request-response paradigm retain no information beyond the context window of the current invocation. When a session terminates — whether through normal completion, timeout, or network interruption — all accumulated reasoning, intermediate conclusions, and established context are irrecoverably discarded. The subsequent session begins with no prior knowledge of the agent's operational history.
+Language model sessions are stateless: context accumulated during one session is lost when the session closes. Prepending full conversation history to the context window is impractical — it wastes tokens and degrades signal-to-noise ratio as history grows.
 
-Naïve remediation approaches, such as prepending entire conversation histories to each context window, are computationally prohibitive and semantically inefficient: the signal-to-noise ratio of unstructured historical text degrades rapidly as history accumulates, and fixed context window limits impose hard upper bounds on retrievable history length. The central research question, then, is not whether to persist memory externally, but how to structure external persistence such that retrieval is both efficient and semantically precise.
-
-Memento MCP adopts a *fragment-based* representation. Rather than storing monolithic conversation transcripts, the system decomposes agent knowledge into fine-grained, independently retrievable units. Each fragment is a typed, keyword-annotated, vector-embedded record — independently queryable, linked to related fragments via a typed edge relation, and subject to a lifecycle management policy that governs TTL tier assignment, importance score decay, and eventual expiration. This design mirrors, at an abstract level, the distinction Aristotle drew in *De Memoria et Reminiscentia* between *mneme* (passive retention of impressions) and *anamnesis* (active retrieval through associative search) — though we refrain from asserting neurological correspondence.
+Memento MCP addresses this by persisting knowledge as discrete, independently retrievable **fragments** rather than monolithic transcripts. Each fragment is a typed, keyword-annotated, vector-embedded record linked to related fragments via explicit typed edges. A lifecycle management policy governs TTL tier assignment, importance score decay, and eventual expiration.
 
 ![Knowledge Graph](assets/images/knowledge-graph.png)
-
-The following sections describe the system architecture (§2), the PostgreSQL schema and indexing strategy (§3), the three-tier retrieval cascade (§4), the fragment lifecycle model (§5), the complete MCP tool interface (§6), the asynchronous quality evaluation subsystem (§7), the consolidation pipeline (§8), fault tolerance behavior (§9), the configuration surface (§10), and deployment considerations (§11).
 
 ![Token Efficiency](assets/images/token-efficiency.png)
 
@@ -293,11 +287,11 @@ The central relation. Each row represents one atomic unit of agent knowledge.
 
 **Index inventory:** `content_hash` (UNIQUE B-tree); `topic` (B-tree); `type` (B-tree); `keywords` (GIN); `importance DESC` (B-tree); `created_at DESC` (B-tree); `agent_id` (B-tree); `linked_to` (GIN); `(ttl_tier, created_at)` (composite B-tree); `source` (B-tree); `verified_at` (B-tree); `is_anchor WHERE is_anchor = TRUE` (partial B-tree); `valid_from` (B-tree); `(topic, type) WHERE valid_to IS NULL` (partial B-tree); `id WHERE valid_to IS NULL` (partial UNIQUE).
 
-**HNSW vector index:** Constructed conditionally on `embedding IS NOT NULL`. Parameters: `m = 16` (maximum bidirectional connections per layer), `ef_construction = 64` (dynamic candidate list size during graph construction), distance function `vector_cosine_ops`. This configuration follows the parameter recommendations of Malkov and Yashunin (2018) for moderate-scale approximate nearest-neighbor search, providing logarithmic query complexity O(log n) against brute-force O(n·d) at the cost of bounded recall degradation. The choice of m=16 and ef_construction=64 represents a heuristic default balancing index build time against query recall; operators with distinct recall/latency requirements should tune accordingly.
+**HNSW vector index:** Conditional on `embedding IS NOT NULL`. Parameters: `m=16` (neighbor connections per node), `ef_construction=64` (search depth during index build), distance function `vector_cosine_ops`. Adjust `ef_construction` upward to improve recall at the cost of longer build time.
 
 ### 3.2 The `fragment_links` Table
 
-Reifies the typed edge relation between fragments independently of the `linked_to` array on `fragments`. The array provides fast single-hop adjacency lookup; this table provides a normalized, queryable representation amenable to relational operations and graph traversal.
+Typed edge relation between fragments. The `linked_to` array on `fragments` provides fast single-hop adjacency; this table provides a normalized, queryable representation for relational operations and graph traversal.
 
 | Column | Type | Constraints |
 |--------|------|-------------|
@@ -311,7 +305,7 @@ UNIQUE constraint on `(from_id, to_id)` prevents duplicate edges. B-tree indexes
 
 ### 3.3 The `tool_feedback` Table
 
-Captures instrument-level utility assessments submitted via the `tool_feedback` MCP tool.
+Utility assessments submitted via the `tool_feedback` MCP tool.
 
 | Column | Type | Semantics |
 |--------|------|-----------|
@@ -364,9 +358,9 @@ CREATE POLICY fragment_isolation_policy ON agent_memory.fragments
     );
 ```
 
-Three access grants are codified: (1) fragments owned by the requesting agent; (2) fragments in the `default` namespace, treated as a shared global knowledge pool accessible — and writable — by all authenticated agents; (3) unrestricted access for maintenance sessions identified as `system` or `admin`.
+Access is granted to: (1) fragments owned by the requesting agent; (2) fragments in the `default` namespace, shared across all agents; (3) sessions identified as `system` or `admin` (maintenance access).
 
-The `default` namespace is an intentional design decision for shared cross-agent knowledge (e.g., system-wide conventions, shared environment configuration). In multi-agent deployments, any authenticated agent may write to the default namespace. Operators requiring strict namespace isolation should ensure all `remember` calls carry explicit `agentId` values and audit `default`-namespace fragments periodically. The isolation context is established per-transaction via `SET LOCAL app.current_agent_id = $1` prior to query execution, ensuring RLS operates on a per-request rather than per-connection basis.
+The isolation context is set per-transaction via `SET LOCAL app.current_agent_id = $1` before query execution. In multi-agent deployments requiring strict isolation, pass explicit `agentId` on all `remember` calls and audit the `default`-namespace periodically.
 
 ### 3.7 API Key-Based Memory Isolation
 
@@ -388,9 +382,9 @@ Prompts are pre-defined guidelines that help the AI use the memory system more e
 
 ---
 
-## 5. Resources: A Window into System State
+## 5. Resources
 
-Resources allow the AI to retrieve real-time state information of the memory system and include it in the context.
+MCP resources exposing real-time system state.
 
 | URI | Description | Data Source |
 |-----|-------------|-------------|
@@ -476,13 +470,13 @@ where `k = 60` (MEMORY_CONFIG.rrfSearch.k) is the denominator stabilization cons
 
 When `text` is absent (structured query using keywords/topic/type only), L3 is not invoked. The response is assembled from L1 and L2 results only, preserving the low-latency path.
 
-After RRF fusion, composite ranking is applied when the fragment count exceeds `MEMORY_CONFIG.ranking.activationThreshold` (default: 100):
+After RRF fusion, composite ranking is applied:
 
 ```
 rank(f) = importanceWeight × importance(f) + recencyWeight × recency_score(f)
 ```
 
-where `importanceWeight = 0.6`, `recencyWeight = 0.4` are heuristic defaults empirically calibrated for general-purpose agent workloads. They are not derived from a formal optimization procedure; operators with domain-specific retrieval requirements should adjust via `MEMORY_CONFIG.ranking`. Below the activation threshold, fragments are returned in creation-descending order, avoiding the overhead of composite ranking for small stores.
+`importanceWeight = 0.6`, `recencyWeight = 0.4` by default. Adjust via `MEMORY_CONFIG.ranking`.
 
 Token budget enforcement follows ranking: fragments are accumulated in rank order and the sequence is truncated when cumulative `estimated_tokens` exceeds `tokenBudget` (default: 1000). Token counts are computed using `js-tiktoken` with the `cl100k_base` encoding via `encodingForModel("gpt-4")`; when the encoder is unavailable at runtime, a `chars / 4` approximation is applied as fallback.
 
@@ -492,7 +486,7 @@ When `includeLinks = true` (default), the result set is augmented with one-hop n
 
 ### 4.6 Performance Characteristics
 
-No empirical benchmarks have been published for this deployment. The estimates below derive from the asymptotic properties of the underlying data structures and from published performance data for the component technologies (Redis 7.x, PostgreSQL 16, pgvector 0.7). Actual latencies in production will vary with hardware, network topology, index parameters, and fragment store cardinality.
+Estimated latencies based on underlying data structure properties. Actual production latencies vary with hardware, network, index parameters, and store cardinality.
 
 | Tier / Operation | Time Complexity | Expected Latency | Dominant Cost |
 |-----------------|-----------------|-----------------|---------------|
