@@ -158,14 +158,18 @@ OAuth 2.0 endpoints: `GET /.well-known/oauth-authorization-server`, `GET /.well-
 | `MemoryManager.js` | Business logic facade. Singleton. Coordinates all memory operations. |
 | `FragmentFactory.js` | Fragment construction, schema validation, keyword extraction, PII masking, TTL inference. |
 | `FragmentStore.js` | PostgreSQL CRUD operations; Redis L1 index synchronization on write. |
-| `FragmentSearch.js` | Three-tier retrieval orchestration (structured: L1→L2; semantic: L1→L2‖L3 RRF merge). |
+| `FragmentSearch.js` | Three-tier retrieval orchestration (structured: L1→L2; semantic: L1→L2‖L3 RRF merge). Per-layer latency instrumentation via `SearchMetrics`. |
 | `FragmentIndex.js` | Redis L1 index management (Set operations per keyword). |
-| `MemoryConsolidator.js` | Eleven-stage lifecycle maintenance pipeline (NLI + Gemini CLI hybrid contradiction detection). |
+| `EmbeddingWorker.js` | Redis queue-based async embedding generation worker (EventEmitter). Emits `embedding_ready` on completion. |
+| `GraphLinker.js` | Subscribes to `embedding_ready`; generates typed edges for newly embedded fragments. Retroactive linking during consolidation. Hebbian co-retrieval linking (`buildCoRetrievalLinks`). |
+| `MorphemeIndex.js` | Morpheme-level embedding lookup via `morpheme_dict` table. L3 fallback when semantic results are sparse. |
+| `MemoryConsolidator.js` | Fifteen-stage lifecycle maintenance pipeline (NLI + Gemini CLI hybrid contradiction detection, feedback-adaptive importance calibration). |
 | `MemoryEvaluator.js` | Asynchronous Gemini CLI quality assessment worker. Singleton. |
 | `NLIClassifier.js` | Natural Language Inference classifier (mDeBERTa ONNX, CPU-only). Entailment/contradiction/neutral labeling for contradiction detection Stage 2. |
 | `SessionActivityTracker.js` | Per-session tool call and fragment activity tracking (Redis Hash). TTL 24h. |
 | `AutoReflect.js` | Automatic `reflect` orchestrator triggered on session termination. Gemini CLI summary with minimal fallback. |
-| `decay.js` | Half-life constants per fragment type and pure exponential decay computation function. |
+| `decay.js` | Half-life constants per fragment type, pure exponential decay function, and ACT-R EMA activation approximation (`updateEmaActivation`, `computeEmaRankBoost`). |
+| `SearchMetrics.js` | Per-layer latency collector (L1/L2/L3/total). Redis circular buffer (100 samples). Exposes P50/P90/P99. |
 | `normalize-vectors.js` | One-time migration script to L2-normalize existing embeddings in the database. |
 | `memory-schema.sql` | PostgreSQL DDL for the `agent_memory` schema. |
 | `migration-001-temporal.sql` | Schema migration: adds `valid_from`, `valid_to`, `superseded_by` columns and temporal indexes. |
@@ -174,6 +178,10 @@ OAuth 2.0 endpoints: `GET /.well-known/oauth-authorization-server`, `GET /.well-
 | `migration-004-key-isolation.sql` | Schema migration: adds `key_id` column to `fragments` for per-API-key memory isolation. |
 | `migration-005-gc-columns.sql` | Schema migration: adds auxiliary indexes on `utility_score` and `access_count` to reinforce GC policy queries. |
 | `migration-006-superseded-by-constraint.sql` | Schema migration: extends `fragment_links.relation_type` CHECK to include `superseded_by`. |
+| `migration-007-link-weight.sql` | Schema migration: adds `weight` column to `fragment_links` for link strength tracking. |
+| `migration-008-morpheme-dict.sql` | Schema migration: creates `morpheme_dict` table for morpheme-level embedding lookup. |
+| `migration-009-co-retrieved.sql` | Schema migration: extends `fragment_links.relation_type` CHECK to include `co_retrieved` (Hebbian co-retrieval links). |
+| `migration-010-ema-activation.sql` | Schema migration: adds `ema_activation` and `ema_last_updated` columns to `fragments` for ACT-R EMA tracking. |
 | `migration-007-flexible-embedding-dims.js` | Schema migration script: converts the `embedding` column to `halfvec(N)` for models with >2000 dimensions (pgvector ≥0.7.0 required). Run with `EMBEDDING_DIMENSIONS=<N>`. |
 | `backfill-embeddings.js` | One-time script to regenerate embeddings for all fragments lacking them; use after a provider or dimension change. |
 
@@ -233,12 +241,15 @@ erDiagram
         text superseded_by "Superseding fragment ID"
         timestamptz last_decay_at "Last decay application timestamp"
         text key_id "API key isolation (NULL=master)"
+        float ema_activation "ACT-R EMA activation approximation (DEFAULT 0.0)"
+        timestamptz ema_last_updated "Last EMA update timestamp"
     }
     fragment_links {
         bigserial id PK
         text from_id FK
         text to_id FK
         text relation_type
+        integer weight "Link strength (co_retrieved accumulates +1)"
     }
     tool_feedback {
         bigserial id PK
@@ -284,6 +295,8 @@ The central relation. Each row represents one atomic unit of agent knowledge.
 | `superseded_by` | TEXT | | ID of the fragment that supersedes this one. |
 | `last_decay_at` | TIMESTAMPTZ | | Timestamp of most recent decay application. Enables idempotent decay: Δt is computed from this column rather than `created_at`. NULL triggers fallback to `COALESCE(accessed_at, created_at, NOW())`. |
 | `key_id` | TEXT | FK → api_keys.id, ON DELETE SET NULL | Per-API-key memory isolation. NULL indicates the fragment was stored via the master key (`MEMENTO_ACCESS_KEY`) and is only accessible to master key requests. A non-null value restricts access to the specific API key that stored it. |
+| `ema_activation` | FLOAT | DEFAULT 0.0 | ACT-R baseline activation EMA approximation. Updated by `incrementAccess()` via: `α × (Δt_sec)^{−0.5} + (1−α) × prev`, α=0.3. Used in `_computeRankScore()` to boost frequently-retrieved fragments. |
+| `ema_last_updated` | TIMESTAMPTZ | | Timestamp of last EMA update. NULL triggers fallback to `created_at − 1 day`. |
 
 **Index inventory:** `content_hash` (UNIQUE B-tree); `topic` (B-tree); `type` (B-tree); `keywords` (GIN); `importance DESC` (B-tree); `created_at DESC` (B-tree); `agent_id` (B-tree); `linked_to` (GIN); `(ttl_tier, created_at)` (composite B-tree); `source` (B-tree); `verified_at` (B-tree); `is_anchor WHERE is_anchor = TRUE` (partial B-tree); `valid_from` (B-tree); `(topic, type) WHERE valid_to IS NULL` (partial B-tree); `id WHERE valid_to IS NULL` (partial UNIQUE).
 
@@ -298,10 +311,13 @@ Typed edge relation between fragments. The `linked_to` array on `fragments` prov
 | `id` | BIGSERIAL | PRIMARY KEY |
 | `from_id` | TEXT | REFERENCES fragments(id) ON DELETE CASCADE |
 | `to_id` | TEXT | REFERENCES fragments(id) ON DELETE CASCADE |
-| `relation_type` | TEXT | CHECK: `related` / `caused_by` / `resolved_by` / `part_of` / `contradicts` / `superseded_by` |
+| `relation_type` | TEXT | CHECK: `related` / `caused_by` / `resolved_by` / `part_of` / `contradicts` / `superseded_by` / `co_retrieved` |
+| `weight` | INTEGER | Link strength. `co_retrieved` links increment +1 on each co-recall event; defaults to 1. |
 | `created_at` | TIMESTAMPTZ | DEFAULT NOW() |
 
-UNIQUE constraint on `(from_id, to_id)` prevents duplicate edges. B-tree indexes on both `from_id` and `to_id`.
+UNIQUE constraint on `(from_id, to_id)` prevents duplicate edges — co-retrieval events increment `weight` instead of inserting a new row. B-tree indexes on both `from_id` and `to_id`.
+
+`co_retrieved` links are created asynchronously by `GraphLinker.buildCoRetrievalLinks()` whenever a `recall` call returns ≥2 fragments in the same session. This implements a Hebbian associative learning mechanism: fragment pairs that are frequently co-retrieved accumulate higher `weight` values, strengthening their inferred association.
 
 ### 3.3 The `tool_feedback` Table
 
@@ -473,10 +489,11 @@ When `text` is absent (structured query using keywords/topic/type only), L3 is n
 After RRF fusion, composite ranking is applied:
 
 ```
-rank(f) = importanceWeight × importance(f) + recencyWeight × recency_score(f)
+effectiveImportance(f) = min(1.0, importance(f) + computeEmaRankBoost(ema_activation(f)) × 0.5)
+rank(f) = importanceWeight × effectiveImportance(f) + recencyWeight × recency_score(f) + semanticWeight × similarity(f)
 ```
 
-`importanceWeight = 0.6`, `recencyWeight = 0.4` by default. Adjust via `MEMORY_CONFIG.ranking`.
+`computeEmaRankBoost(ema) = 0.3 × (1 − e^{−ema})` — maximum additional boost of 0.15 for the most frequently retrieved fragments. `importanceWeight = 0.4`, `recencyWeight = 0.3`, `semanticWeight = 0.3` by default. Adjust via `MEMORY_CONFIG.ranking`.
 
 Token budget enforcement follows ranking: fragments are accumulated in rank order and the sequence is truncated when cumulative `estimated_tokens` exceeds `tokenBudget` (default: 1000). Token counts are computed using `js-tiktoken` with the `cl100k_base` encoding via `encodingForModel("gpt-4")`; when the encoder is unavailable at runtime, a `chars / 4` approximation is applied as fallback.
 
@@ -713,9 +730,20 @@ Records a utility assessment for a previously executed tool invocation.
 
 Returns aggregate statistics: total fragment count, TTL tier distribution, type-wise counts, embedding coverage ratio, mean utility scores. No parameters.
 
+Response includes a `searchLatencyMs` key with rolling P50/P90/P99 latencies (ms) per retrieval layer, sampled over the last 100 searches:
+
+```json
+"searchLatencyMs": {
+  "L1":    { "p50": 0,   "p90": 1,   "p99": 7,   "count": 26 },
+  "L2":    { "p50": 4,   "p90": 175, "p99": 595, "count": 26 },
+  "L3":    { "p50": 159, "p90": 595, "p99": 595, "count": 10 },
+  "total": { "p50": 8,   "p90": 177, "p99": 597, "count": 26 }
+}
+```
+
 ### 6.11 `memory_consolidate`
 
-Triggers the eleven-stage consolidation pipeline synchronously. Returns per-stage processing counts including NLI statistics (`nliResolvedDirectly`, `nliSkippedAsNonContra`). No parameters. See §8.
+Triggers the fifteen-stage consolidation pipeline synchronously. Returns per-stage processing counts including NLI statistics (`nliResolvedDirectly`, `nliSkippedAsNonContra`). No parameters. See §8.
 
 ### 6.12 `graph_explore`
 
@@ -778,6 +806,10 @@ memory_consolidate
         │                         └─ CLI unavailable → queue to Redis pending list
         ├── Stage 7.5: pending contradiction reprocessing (Redis queue, max 10 per cycle)
         ├── Stage 8:  feedback report generation (tool_feedback/task_feedback aggregation)
+        ├── Stage 8.5: feedback-adaptive importance calibration (_calibrateByFeedback)
+        │               Joins tool_feedback sessions with SessionActivityTracker co-recall history.
+        │               sufficient=true → +5%; sufficient=false, relevant=true → −2.5%; relevant=false → −5%.
+        │               Learning rate 0.05, clipped to [0.05, 1.0]. is_anchor=true exempt.
         ├── Stage 9:  Redis index pruning + stale fragment collection
         └── Stage 10: aggregate statistics (per-stage counts → return value)
 ```
