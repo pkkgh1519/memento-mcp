@@ -10,6 +10,27 @@
 
 # Memento MCP
 
+빠른 진입 경로:
+
+- [Quick Start](docs/getting-started/quickstart.md)
+- [Windows WSL2 Setup](docs/getting-started/windows-wsl2.md)
+- [Windows PowerShell Setup](docs/getting-started/windows-powershell.md)
+- [Claude Code Configuration](docs/getting-started/claude-code.md)
+- [First Memory Flow](docs/getting-started/first-memory-flow.md)
+- [Troubleshooting](docs/getting-started/troubleshooting.md)
+
+## 5분 시작
+
+```bash
+cp .env.example.minimal .env
+npm install
+psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;"
+psql "$DATABASE_URL" -f lib/memory/memory-schema.sql
+node server.js
+```
+
+설치 후에는 [First Memory Flow](docs/getting-started/first-memory-flow.md)로 첫 기억 저장/조회가 되는지 확인한다.
+
 ---
 
 ChatGPT나 Claude 써봤으면 알 거임. 대화 창 닫고 다시 열면 어제 3시간 같이 작업한 거 싹 잊어버리고 "안녕하세요! 무엇을 도와드릴까요?" 이러고 있음.

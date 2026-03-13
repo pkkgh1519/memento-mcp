@@ -34,7 +34,49 @@
 
 # Memento MCP
 
-**[Installation Guide →](INSTALL.en.md)**
+Quick entry points:
+
+- [Quick Start](docs/getting-started/quickstart.md)
+- [Windows WSL2 Setup](docs/getting-started/windows-wsl2.md)
+- [Windows PowerShell Setup](docs/getting-started/windows-powershell.md)
+- [Claude Code Configuration](docs/getting-started/claude-code.md)
+- [First Memory Flow](docs/getting-started/first-memory-flow.md)
+- [Troubleshooting](docs/getting-started/troubleshooting.md)
+- [Installation Guide](INSTALL.en.md)
+
+## Quick Start
+
+Minimum setup:
+
+- Required: Node.js 20+, PostgreSQL, `vector` extension
+- Optional: Redis
+- Optional: embedding provider
+- Optional: Claude Code integration
+
+Shortest bootstrap path:
+
+```bash
+cp .env.example.minimal .env
+npm install
+psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;"
+psql "$DATABASE_URL" -f lib/memory/memory-schema.sql
+node server.js
+```
+
+After the server starts, validate `remember`, `recall`, and `context` with [First Memory Flow](docs/getting-started/first-memory-flow.md).
+
+## Supported Environments
+
+| Environment | Recommendation | Start Here |
+|-------------|----------------|------------|
+| Linux / macOS | Recommended | [Quick Start](docs/getting-started/quickstart.md) |
+| Windows + WSL2 | Best option | [Windows WSL2 Setup](docs/getting-started/windows-wsl2.md) |
+| Windows + PowerShell | Limited support | [Windows PowerShell Setup](docs/getting-started/windows-powershell.md) |
+
+## When Claude Code Is Needed
+
+- If you only want to run the server: Claude Code configuration is not required
+- If you want Claude Code to call memory tools directly: use [Claude Code Configuration](docs/getting-started/claude-code.md)
 
 ---
 

@@ -1,5 +1,21 @@
 # Installation Guide
 
+## Choose Your Starting Path
+
+- Fastest bootstrap: [Quick Start](docs/getting-started/quickstart.md)
+- Best Windows path: [Windows WSL2 Setup](docs/getting-started/windows-wsl2.md)
+- Bash-free Windows path: [Windows PowerShell Setup](docs/getting-started/windows-powershell.md)
+- Claude Code integration: [Claude Code Configuration](docs/getting-started/claude-code.md)
+- Post-install verification: [First Memory Flow](docs/getting-started/first-memory-flow.md)
+- Common failures: [Troubleshooting](docs/getting-started/troubleshooting.md)
+
+## Support Policy
+
+- Linux / macOS: standard path
+- Windows: WSL2 Ubuntu recommended
+- Windows PowerShell: limited support
+- `setup.sh`: assumes a Bash environment
+
 ## Quick Start (Interactive Setup Script)
 
 ```bash
@@ -79,6 +95,14 @@ npm run backfill:embeddings
 
 ## Environment Variables
 
+For the fastest bootstrap:
+
+```bash
+cp .env.example.minimal .env
+```
+
+For the full operational sample:
+
 ```bash
 cp .env.example .env
 # Edit .env: set DATABASE_URL, MEMENTO_ACCESS_KEY, and other required values
@@ -96,21 +120,7 @@ On startup, the server logs the listening port, authentication status, session T
 
 ## MCP Client Configuration
 
-Store the access key in an environment variable; do not commit plaintext credentials.
-
-```json
-{
-  "mcpServers": {
-    "memento": {
-      "type": "http",
-      "url": "http://localhost:57332/mcp",
-      "headers": {
-        "Authorization": "Bearer ${MEMENTO_ACCESS_KEY}"
-      }
-    }
-  }
-}
-```
+See [Claude Code Configuration](docs/getting-started/claude-code.md) for the dedicated setup guide.
 
 For external access, expose the service through a reverse proxy (TLS termination, rate limiting). Do not publish internal host addresses or port numbers in external documentation.
 

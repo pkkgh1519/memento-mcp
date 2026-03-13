@@ -1,0 +1,142 @@
+---
+title: "Quick Start"
+date: 2026-03-13
+author: 최진호
+updated: 2026-03-13
+---
+
+# Quick Start
+
+이 문서는 최소 구성으로 Memento MCP를 실행하는 경로다. 기준은 다음과 같다.
+
+- 필수: Node.js 20+, PostgreSQL, `vector` extension
+- 선택: Redis
+- 선택: 임베딩 provider
+- 선택: Claude Code 연동
+
+Redis, 임베딩 provider, NLI 외부 서비스가 없어도 기본 서버 기동과 핵심 도구 호출은 가능하다.
+
+## 1. 의존성 준비
+
+```bash
+node --version
+psql --version
+```
+
+Node.js는 20 이상을 권장한다. PostgreSQL에는 `pgvector` extension이 설치되어 있어야 한다.
+
+## 2. 최소 환경 파일 생성
+
+```bash
+cp .env.example.minimal .env
+```
+
+`.env`에서 최소한 아래 값을 채운다.
+
+```env
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_DB=memento
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=change-me
+DATABASE_URL=postgresql://postgres:change-me@localhost:5432/memento
+MEMENTO_ACCESS_KEY=change-me
+```
+
+## 3. 의존성 설치
+
+```bash
+npm install
+```
+
+CUDA 11 환경에서 `onnxruntime-node` 설치 오류가 발생하면 아래 명령을 사용한다.
+
+```bash
+npm install --onnxruntime-node-install-cuda=skip
+```
+
+## 4. PostgreSQL schema 적용
+
+먼저 `vector` extension을 확인한다.
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+```
+
+그 다음 schema를 적용한다.
+
+```bash
+psql "$DATABASE_URL" -f lib/memory/memory-schema.sql
+```
+
+기존 설치를 업그레이드하는 경우에는 [INSTALL.md](../../INSTALL.md)의 마이그레이션 순서를 따른다.
+
+## 5. 서버 실행
+
+```bash
+node server.js
+```
+
+정상 기동 시 다음과 비슷한 로그가 보인다.
+
+```text
+Memento MCP HTTP server listening on port 57332
+Streamable HTTP endpoints: POST/GET/DELETE /mcp
+Authentication: ENABLED
+```
+
+## 6. 헬스 체크
+
+```bash
+curl -s http://localhost:57332/health
+```
+
+정상 응답 예시:
+
+```json
+{
+  "ok": true
+}
+```
+
+## 7. 첫 remember 호출
+
+```bash
+curl -s -X POST http://localhost:57332/mcp \
+  -H "Authorization: Bearer change-me" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/call",
+    "params": {
+      "name": "remember",
+      "arguments": {
+        "topic": "onboarding",
+        "type": "fact",
+        "content": "Quick Start로 서버 기동 확인을 완료했다."
+      }
+    }
+  }'
+```
+
+## 8. 첫 recall 호출
+
+```bash
+curl -s -X POST http://localhost:57332/mcp \
+  -H "Authorization: Bearer change-me" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "tools/call",
+    "params": {
+      "name": "recall",
+      "arguments": {
+        "topic": "onboarding"
+      }
+    }
+  }'
+```
+
+다음 단계는 [First Memory Flow](first-memory-flow.md) 문서를 따라 `context`, `remember`, `recall` 사용 흐름을 검증하는 것이다.

@@ -34,7 +34,49 @@
 
 # Memento MCP
 
-**[설치 가이드 →](INSTALL.md)**
+빠른 진입 경로:
+
+- [Quick Start](docs/getting-started/quickstart.md)
+- [Windows WSL2 Setup](docs/getting-started/windows-wsl2.md)
+- [Windows PowerShell Setup](docs/getting-started/windows-powershell.md)
+- [Claude Code Configuration](docs/getting-started/claude-code.md)
+- [First Memory Flow](docs/getting-started/first-memory-flow.md)
+- [Troubleshooting](docs/getting-started/troubleshooting.md)
+- [설치 가이드](INSTALL.md)
+
+## Quick Start
+
+최소 구성 기준:
+
+- 필수: Node.js 20+, PostgreSQL, `vector` extension
+- 선택: Redis
+- 선택: 임베딩 provider
+- 선택: Claude Code 연동
+
+가장 짧은 실행 경로:
+
+```bash
+cp .env.example.minimal .env
+npm install
+psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;"
+psql "$DATABASE_URL" -f lib/memory/memory-schema.sql
+node server.js
+```
+
+서버가 뜬 뒤에는 [First Memory Flow](docs/getting-started/first-memory-flow.md)로 `remember`, `recall`, `context` 호출을 검증한다.
+
+## 지원 환경
+
+| 환경 | 권장도 | 시작 문서 |
+|------|--------|-----------|
+| Linux / macOS | 권장 | [Quick Start](docs/getting-started/quickstart.md) |
+| Windows + WSL2 | 가장 권장 | [Windows WSL2 Setup](docs/getting-started/windows-wsl2.md) |
+| Windows + PowerShell | 제한 지원 | [Windows PowerShell Setup](docs/getting-started/windows-powershell.md) |
+
+## Claude Code가 필요한 경우
+
+- memento 서버만 직접 실행할 경우: Claude Code 설정 불필요
+- Claude Code가 기억 도구를 직접 쓰게 할 경우: [Claude Code Configuration](docs/getting-started/claude-code.md) 필요
 
 ## 개요
 

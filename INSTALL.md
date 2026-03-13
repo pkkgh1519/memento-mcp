@@ -1,5 +1,21 @@
 # 설치 가이드
 
+## 시작 경로 선택
+
+- 최소 실행만 빨리 확인: [Quick Start](docs/getting-started/quickstart.md)
+- Windows에서 가장 안정적인 설치: [Windows WSL2 Setup](docs/getting-started/windows-wsl2.md)
+- Windows에서 Bash 없이 수동 설치: [Windows PowerShell Setup](docs/getting-started/windows-powershell.md)
+- Claude Code 연동: [Claude Code Configuration](docs/getting-started/claude-code.md)
+- 설치 후 첫 검증: [First Memory Flow](docs/getting-started/first-memory-flow.md)
+- 문제 해결: [Troubleshooting](docs/getting-started/troubleshooting.md)
+
+## 지원 정책
+
+- Linux / macOS: 일반 설치 경로
+- Windows: WSL2 Ubuntu 경로 권장
+- Windows PowerShell: 제한 지원
+- `setup.sh`: Bash 환경 전제
+
 ## 빠른 시작 (대화형 설치 스크립트)
 
 ```bash
@@ -68,6 +84,14 @@ npm run backfill:embeddings
 
 ## 환경 변수 설정
 
+빠르게 시작하려면:
+
+```bash
+cp .env.example.minimal .env
+```
+
+운영형 예시를 사용하려면:
+
 ```bash
 cp .env.example .env
 # .env 파일에서 DATABASE_URL, MEMENTO_ACCESS_KEY 등 필수 값 입력
@@ -83,21 +107,7 @@ node server.js
 
 ## Claude Code 연결
 
-`~/.claude/settings.json` 또는 프로젝트 `.claude/settings.json`:
-
-```json
-{
-  "mcpServers": {
-    "memento": {
-      "type": "http",
-      "url": "http://localhost:57332/mcp",
-      "headers": {
-        "Authorization": "Bearer YOUR_MEMENTO_ACCESS_KEY"
-      }
-    }
-  }
-}
-```
+상세 설정은 [Claude Code Configuration](docs/getting-started/claude-code.md)을 참고한다.
 
 ## 훅 기반 Context 자동 로드
 
