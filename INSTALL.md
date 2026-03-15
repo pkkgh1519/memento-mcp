@@ -63,6 +63,7 @@ psql $DATABASE_URL -f lib/memory/migration-007-link-weight.sql   # fragment_link
 psql $DATABASE_URL -f lib/memory/migration-008-morpheme-dict.sql # 형태소 사전 테이블 추가
 psql $DATABASE_URL -f lib/memory/migration-009-co-retrieved.sql  # co_retrieved 링크 타입 추가
 psql $DATABASE_URL -f lib/memory/migration-010-ema-activation.sql # EMA 활성화 컬럼 추가
+psql $DATABASE_URL -f lib/memory/migration-011-key-groups.sql      # API 키 그룹
 ```
 
 > **v1.1.0 이전에서 업그레이드하는 경우**: migration-006 미실행 시 `amend`, `memory_consolidate`, GraphLinker 자동 관계 생성에서 DB 제약 에러가 발생한다(`superseded_by` INSERT 실패). 기존 DB를 유지하며 업그레이드할 때 반드시 실행해야 한다.

@@ -127,7 +127,9 @@ server.js  (HTTP 서버)
     └── lib/memory/
             ├── MemoryManager.js          비즈니스 로직 파사드 (싱글턴)
             ├── FragmentFactory.js        파편 생성, 유효성 검증, PII 마스킹
-            ├── FragmentStore.js          PostgreSQL CRUD, Redis L1 인덱스 갱신
+            ├── FragmentStore.js          PostgreSQL CRUD 파사드 (FragmentReader + FragmentWriter 위임)
+            ├── FragmentReader.js         파편 읽기 (getById, getByIds, getHistory, searchByKeywords, searchBySemantic)
+            ├── FragmentWriter.js         파편 쓰기 (insert, update, delete, incrementAccess)
             ├── FragmentSearch.js         3계층 검색 조율 (구조적: L1→L2, 시맨틱: L1→L2‖L3 RRF 병합)
             ├── FragmentIndex.js          Redis L1 인덱스 관리
             ├── EmbeddingWorker.js        Redis 큐 기반 비동기 임베딩 생성 워커 (EventEmitter)
@@ -158,7 +160,8 @@ server.js  (HTTP 서버)
             ├── migration-007-link-weight.sql  fragment_links.weight 컬럼 추가 (링크 강도 수치화)
             ├── migration-008-morpheme-dict.sql 형태소 사전 테이블 (morpheme_dict)
             ├── migration-009-co-retrieved.sql fragment_links CHECK에 co_retrieved 추가 (Hebbian 링킹)
-            └── migration-010-ema-activation.sql fragments.ema_activation/ema_last_updated 컬럼 추가
+            ├── migration-010-ema-activation.sql fragments.ema_activation/ema_last_updated 컬럼 추가
+            └── migration-011-key-groups.sql  API 키 그룹 N:M 매핑 (api_key_groups, api_key_group_members)
 ```
 
 지원 모듈:
@@ -175,12 +178,13 @@ lib/
 ├── metrics.js         Prometheus 메트릭 수집 (prom-client)
 ├── logger.js          Winston 로거 (daily rotate)
 ├── rate-limiter.js    IP 기반 sliding window rate limiter
-├── http-handlers.js   HTTP 요청 핸들러 (엔드포인트별 처리 로직)
+├── http-handlers.js   MCP/SSE HTTP 핸들러 (Admin 라우트는 admin-routes.js로 분리)
 ├── scheduler.js       주기 작업 스케줄러 (setInterval 작업 관리)
 └── utils.js           Origin 검증, JSON 바디 파싱(2MB 상한), SSE 출력
 
 lib/admin/
-└── ApiKeyStore.js     API 키 CRUD 및 인증 검증 (SHA-256 해시 저장, 원시 키 단 1회 반환)
+├── ApiKeyStore.js     API 키 CRUD, 그룹 CRUD, 인증 검증 (SHA-256 해시 저장, 원시 키 단 1회 반환)
+└── admin-routes.js    Admin REST API 라우트 + UI 서빙 (그룹 관리, 인증 게이트)
 
 lib/http/
 └── helpers.js         HTTP SSE 스트림 헬퍼 및 요청 파싱 유틸리티
@@ -378,6 +382,27 @@ CREATE POLICY fragment_isolation_policy ON agent_memory.fragments
 `key_id` 컬럼을 통해 API 키 단위의 추가 격리 레이어를 지원한다. 마스터 키(`MEMENTO_ACCESS_KEY`)로 접속한 요청이 저장한 파편은 `key_id = NULL`이며 마스터 키로만 조회 가능하다. DB에 발급된 API 키로 접속한 요청이 저장한 파편은 `key_id = <해당 키 ID>`로 기록되며 그 키만 조회할 수 있다.
 
 이 격리 모델은 다중 에이전트 환경에서 키 단위 메모리 파티셔닝을 구현한다. API 키는 Admin SPA(`/v1/internal/model/nothing`)에서 관리하며, 생성 시 원시 키(`mmcp_<slug>_<32 hex>`)는 응답에서 단 1회만 반환되고 DB에는 SHA-256 해시만 저장된다.
+
+Admin UI(`/v1/internal/model/nothing`)는 마스터 키 인증이 필요하다. Authorization Bearer 헤더 또는 `?key=` 쿼리 파라미터로 인증한다.
+
+### API 키 그룹
+
+같은 그룹에 속한 API 키들은 동일한 파편 격리 범위를 공유한다. 여러 에이전트(Claude Code, Codex, Gemini 등)가 하나의 프로젝트 기억을 공유할 때 사용한다.
+
+- N:M 매핑: 한 키가 복수 그룹에 소속 가능 (`api_key_group_members` 테이블)
+- 격리 해상도: 인증 시 `COALESCE(group_id, api_keys.id)`를 effective_key_id로 사용
+- 그룹 미소속 키: 기존 동작 유지 (자체 id로 격리)
+
+Admin REST 엔드포인트:
+
+| Method | Path | 설명 |
+|--------|------|------|
+| GET | `.../groups` | 그룹 목록 (key_count 포함) |
+| POST | `.../groups` | 그룹 생성 (`{ name, description? }`) |
+| DELETE | `.../groups/:id` | 그룹 삭제 (멤버십 CASCADE) |
+| GET | `.../groups/:id/members` | 그룹 소속 키 목록 |
+| POST | `.../groups/:id/members` | 키를 그룹에 추가 (`{ key_id }`) |
+| DELETE | `.../groups/:gid/members/:kid` | 키를 그룹에서 제거 |
 
 ---
 
@@ -826,6 +851,7 @@ importanceWeight + recencyWeight + semanticWeight의 합은 1.0이어야 한다.
 | RATE_LIMIT_WINDOW_MS | 60000 | Rate limiting 윈도우 크기 (ms) |
 | RATE_LIMIT_MAX_REQUESTS | 120 | 윈도우 내 IP당 최대 요청 수 |
 | CONSOLIDATE_INTERVAL_MS | 21600000 | 자동 유지보수(consolidate) 실행 간격 (ms). 기본 6시간 |
+| OAUTH_ALLOWED_REDIRECT_URIS | (없음) | OAuth redirect_uri 허용 prefix (쉼표 구분, 미설정 시 localhost만 허용) |
 
 ### PostgreSQL
 
