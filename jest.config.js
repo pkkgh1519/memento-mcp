@@ -1,10 +1,30 @@
 export default {
-  testEnvironment: "node",
-  testMatch: [
-    "**/tests/*.test.js"
-  ],
-  testPathIgnorePatterns: [
-    "/node_modules/",
-    "/.worktrees/"
-  ],
+  projects: [
+    {
+      displayName: "unit",
+      testEnvironment: "node",
+      testMatch: [
+        "<rootDir>/tests/*.test.js",
+        "<rootDir>/tests/unit/**/*.test.js"
+      ],
+      testPathIgnorePatterns: [
+        "/node_modules/",
+        "/.worktrees/",
+        "/tests/integration/",
+        "/tests/e2e/"
+      ]
+    },
+    {
+      displayName: "integration",
+      testEnvironment: "node",
+      testMatch: [
+        "<rootDir>/tests/integration/**/*.test.js",
+        "<rootDir>/tests/integration/**/test-*.js"
+      ],
+      testPathIgnorePatterns: [
+        "/node_modules/",
+        "/.worktrees/"
+      ]
+    }
+  ]
 };
