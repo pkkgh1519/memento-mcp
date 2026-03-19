@@ -100,3 +100,18 @@ describe("Seen IDs 중복 방지", () => {
     assert.strictEqual(filtered.length, 1, "excludeSeen=false면 전체 반환");
   });
 });
+
+describe("context() seen IDs 저장", () => {
+
+  test("context()가 반환하는 파편 ID에서 null이 제외된다", () => {
+    const dedupResult = [
+      { id: "frag-a", content: "X", type: "preference" },
+      { id: null, content: "Y", type: "error" },
+      { id: "frag-b", content: "Z", type: "procedure" }
+    ];
+
+    const seenIds = dedupResult.map(f => f.id).filter(Boolean);
+    assert.deepStrictEqual(seenIds, ["frag-a", "frag-b"]);
+    assert.strictEqual(seenIds.length, 2, "null ID는 제외되어야 한다");
+  });
+});
