@@ -19,10 +19,8 @@ jobs:
       - run: npm ci
       - name: Lint
         run: npm run lint
-      - name: Jest tests
+      - name: All unit tests (Jest + node:test)
         run: npm test
-      - name: node:test unit tests
-        run: npm run test:unit:node
 
   e2e:
     name: E2E Tests (with DB)

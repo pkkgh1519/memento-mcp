@@ -718,6 +718,7 @@ Executes the three-tier retrieval cascade. Parameters may be combined freely.
 | `linkRelationType` | string | Edge type filter for linked neighbors. Default: `caused_by`, `resolved_by`, `related` |
 | `threshold` | number | Minimum cosine similarity for L3 results [0.0, 1.0]. L1/L2 results are unaffected. |
 | `asOf` | string | ISO 8601 datetime (e.g., `"2026-01-15T00:00:00Z"`). Enables point-in-time retrieval: returns only fragments where `valid_from ≤ asOf AND (valid_to IS NULL OR valid_to > asOf)`. Useful for auditing knowledge state at a specific historical moment. |
+| `excludeSeen` | boolean | When `true` (default), excludes fragments already injected by the most recent `context()` call in the same session. Prevents duplicate injection. |
 | `agentId` | string | Agent identifier |
 
 ### 6.4 `forget`

@@ -558,6 +558,7 @@ stale 기준(일): procedure=30, fact=60, decision=90, default=60. `config/memor
 | threshold | number | L3 코사인 유사도 하한 (0.0~1.0). 이 값 미만의 벡터 검색 결과 제외 |
 | asOf | string | ISO 8601 날짜시간 (예: "2026-01-15T00:00:00Z"). anchorTime으로 변환되어 해당 시점 근접 파편이 우선 배치된다 |
 | includeSuperseded | boolean | true 시 valid_to가 설정된(만료된) 파편도 포함. 기본 false — superseded_by로 대체된 파편은 기본적으로 검색에서 제외된다 |
+| excludeSeen | boolean | true(기본)이면 같은 세션의 직전 context() 호출에서 주입된 파편을 결과에서 제외한다. 중복 주입 방지용 |
 | cursor | string | 페이지네이션 커서. 이전 결과의 nextCursor 값을 전달하면 다음 페이지 반환 |
 | pageSize | number | 페이지 크기. 기본 20, 최대 50 |
 | agentId | string | 에이전트 ID |
@@ -1285,8 +1286,8 @@ npm test          # Jest + unit + integration 순차 실행
 개별 실행:
 ```bash
 npm run test:jest        # Jest — tests/*.test.js
-npm run test:unit        # node:test — tests/unit/*.test.js
-npm run test:integration # node:test — tests/integration/*.test.js
+npm run test:unit:node   # node:test — tests/unit/*.test.js
+npm run test:integration # node:test — tests/integration/*.test.js + tests/e2e/*.test.js
 ```
 
 ### E2E 테스트 (PostgreSQL 필요)
