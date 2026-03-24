@@ -173,6 +173,8 @@ server.js  (HTTP 서버)
             ├── AutoReflect.js            세션 종료 시 자동 reflect 오케스트레이터
             ├── decay.js                  지수 감쇠 반감기 상수, 순수 계산 함수, ACT-R EMA 활성화 근사 (`updateEmaActivation`, `computeEmaRankBoost`), EMA 기반 동적 반감기 (`computeDynamicHalfLife`), 나이 가중치 utility score (`computeUtilityScore`)
             ├── SearchMetrics.js          L1/L2/L3/total 레이어별 지연 시간 수집 (Redis 원형 버퍼, P50/P90/P99)
+            ├── SearchEventAnalyzer.js    검색 이벤트 분석, 쿼리 패턴 추적 (SearchEventRecorder로부터 읽음)
+            ├── SearchEventRecorder.js    FragmentSearch.search() 결과 to search_events 테이블 기록
             ├── EvaluationMetrics.js      tool_feedback 기반 implicit Precision@5 및 downstream task 성공률 계산
             ├── memory-schema.sql         PostgreSQL 스키마 정의
             ├── migration-001-temporal.sql Temporal 스키마 마이그레이션 (valid_from/to/superseded_by)
@@ -186,7 +188,8 @@ server.js  (HTTP 서버)
             ├── migration-009-co-retrieved.sql fragment_links CHECK에 co_retrieved 추가 (Hebbian 링킹)
             ├── migration-010-ema-activation.sql fragments.ema_activation/ema_last_updated 컬럼 추가
             ├── migration-011-key-groups.sql  API 키 그룹 N:M 매핑 (api_key_groups, api_key_group_members)
-            └── migration-012-quality-verified.sql fragments.quality_verified 컬럼 추가 (MemoryEvaluator 판정 결과 영속화)
+            ├── migration-012-quality-verified.sql fragments.quality_verified 컬럼 추가 (MemoryEvaluator 판정 결과 영속화)
+            └── migration-013-search-events.sql search_events 테이블 생성 (검색 쿼리/결과 관측성)
 ```
 
 지원 모듈:

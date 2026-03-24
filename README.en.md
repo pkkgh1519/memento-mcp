@@ -222,6 +222,8 @@ OAuth 2.0 endpoints: `GET /.well-known/oauth-authorization-server`, `GET /.well-
 | `AutoReflect.js` | Automatic `reflect` orchestrator triggered on session termination. Gemini CLI summary with minimal fallback. |
 | `decay.js` | Half-life constants per fragment type, pure exponential decay function, and ACT-R EMA activation approximation (`updateEmaActivation`, `computeEmaRankBoost`). |
 | `SearchMetrics.js` | Per-layer latency collector (L1/L2/L3/total). Redis circular buffer (100 samples). Exposes P50/P90/P99. |
+| `SearchEventAnalyzer.js` | Analyzes search events, tracks query patterns (reads from search_events table). |
+| `SearchEventRecorder.js` | Records FragmentSearch.search() results to search_events PostgreSQL table. |
 | `normalize-vectors.js` | One-time migration script to L2-normalize existing embeddings in the database. |
 | `memory-schema.sql` | PostgreSQL DDL for the `agent_memory` schema. |
 | `migration-001-temporal.sql` | Schema migration: adds `valid_from`, `valid_to`, `superseded_by` columns and temporal indexes. |
@@ -235,6 +237,8 @@ OAuth 2.0 endpoints: `GET /.well-known/oauth-authorization-server`, `GET /.well-
 | `migration-009-co-retrieved.sql` | Schema migration: extends `fragment_links.relation_type` CHECK to include `co_retrieved` (Hebbian co-retrieval links). |
 | `migration-010-ema-activation.sql` | Schema migration: adds `ema_activation` and `ema_last_updated` columns to `fragments` for ACT-R EMA tracking. |
 | `migration-011-key-groups.sql` | Schema migration: creates `api_key_groups` and `api_key_group_members` tables for API key group management. |
+| `migration-012-quality-verified.sql` | Schema migration: adds `quality_verified` column to `fragments` for MemoryEvaluator assessment results. |
+| `migration-013-search-events.sql` | Schema migration: creates `search_events` table for search query and result observability. |
 | `migration-007-flexible-embedding-dims.js` | Schema migration script: converts the `embedding` column to `halfvec(N)` for models with >2000 dimensions (pgvector ≥0.7.0 required). Run with `EMBEDDING_DIMENSIONS=<N>`. |
 | `backfill-embeddings.js` | One-time script to regenerate embeddings for all fragments lacking them; use after a provider or dimension change. |
 
