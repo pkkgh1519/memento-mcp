@@ -1,0 +1,7 @@
+/* Memento Admin Dashboard Styles */
+:root {
+  --bg-primary:   #050a18;
+  --bg-secondary: #0c1530;
+  --text-primary: #e8edf8;
+  --border-color: rgba(255, 255, 255, 0.07);
+}

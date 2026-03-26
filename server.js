@@ -54,6 +54,7 @@ import {
   handleOAuthToken,
   handleAdminUi,
   handleAdminImage,
+  handleAdminStatic,
   handleAdminApi
 } from "./lib/http-handlers.js";
 
@@ -152,6 +153,11 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && url.pathname.startsWith(`${ADMIN_BASE}/images/`)) {
     handleAdminImage(req, res);
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname.startsWith(`${ADMIN_BASE}/assets/`)) {
+    handleAdminStatic(req, res);
     return;
   }
 
