@@ -51,7 +51,7 @@ desktop.ini
 # Temporary files
 tmp/
 temp/
-Requirements.md
+docs/Requirements.md
 # Private Documents (Patent, etc.)
 docs/private/
 docs/plans/

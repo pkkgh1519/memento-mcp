@@ -2,12 +2,12 @@
 
 ## Choose Your Starting Path
 
-- Fastest bootstrap: [Quick Start](docs/getting-started/quickstart.md)
-- Best Windows path: [Windows WSL2 Setup](docs/getting-started/windows-wsl2.md)
-- Bash-free Windows path: [Windows PowerShell Setup](docs/getting-started/windows-powershell.md)
-- Claude Code integration: [Claude Code Configuration](docs/getting-started/claude-code.md)
-- Post-install verification: [First Memory Flow](docs/getting-started/first-memory-flow.md)
-- Common failures: [Troubleshooting](docs/getting-started/troubleshooting.md)
+- Fastest bootstrap: [Quick Start](getting-started/quickstart.md)
+- Best Windows path: [Windows WSL2 Setup](getting-started/windows-wsl2.md)
+- Bash-free Windows path: [Windows PowerShell Setup](getting-started/windows-powershell.md)
+- Claude Code integration: [Claude Code Configuration](getting-started/claude-code.md)
+- Post-install verification: [First Memory Flow](getting-started/first-memory-flow.md)
+- Common failures: [Troubleshooting](getting-started/troubleshooting.md)
 
 ## Support Policy
 
@@ -123,7 +123,7 @@ cp .env.example .env
 # Edit .env: set DATABASE_URL, MEMENTO_ACCESS_KEY, and other required values
 ```
 
-For the full list of environment variables, see [README.en.md — Configuration](README.en.md#10-configuration).
+For the full list of environment variables, see [README.en.md — Configuration](../README.en.md#10-configuration).
 
 ## Starting the Server
 
@@ -135,7 +135,7 @@ On startup, the server logs the listening port, authentication status, session T
 
 ## MCP Client Configuration
 
-See [Claude Code Configuration](docs/getting-started/claude-code.md) for the dedicated setup guide.
+See [Claude Code Configuration](getting-started/claude-code.md) for the dedicated setup guide.
 
 For external access, expose the service through a reverse proxy (TLS termination, rate limiting). Do not publish internal host addresses or port numbers in external documentation.
 

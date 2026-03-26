@@ -42,7 +42,8 @@
 - [Claude Code Configuration](docs/getting-started/claude-code.md)
 - [First Memory Flow](docs/getting-started/first-memory-flow.md)
 - [Troubleshooting](docs/getting-started/troubleshooting.md)
-- [설치 가이드](INSTALL.md)
+- [설치 가이드](docs/INSTALL.md)
+- [AI Skill Reference](SKILL.md)
 
 ## 목차
 
@@ -1370,7 +1371,7 @@ npm run test:ci          # npm test + test:e2e
 
 ## 설치
 
-설치, 마이그레이션, Claude Code 연결, 훅 설정은 **[INSTALL.md](INSTALL.md)**를 참조한다.
+설치, 마이그레이션, Claude Code 연결, 훅 설정은 **[INSTALL.md](docs/INSTALL.md)**를 참조한다.
 
 ---
 

@@ -42,7 +42,8 @@ Quick entry points:
 - [Claude Code Configuration](docs/getting-started/claude-code.md)
 - [First Memory Flow](docs/getting-started/first-memory-flow.md)
 - [Troubleshooting](docs/getting-started/troubleshooting.md)
-- [Installation Guide](INSTALL.en.md)
+- [Installation Guide](docs/INSTALL.en.md)
+- [AI Skill Reference](SKILL.md)
 
 ## Quick Start
 
@@ -1478,7 +1479,7 @@ EMBEDDING_DIMENSIONS=768
 
 ## 11. Deployment
 
-See **[INSTALL.en.md](INSTALL.en.md)** for full installation, migration, client configuration, and hook setup instructions.
+See **[INSTALL.en.md](docs/INSTALL.en.md)** for full installation, migration, client configuration, and hook setup instructions.
 
 ---
 

@@ -2,12 +2,12 @@
 
 ## 시작 경로 선택
 
-- 최소 실행만 빨리 확인: [Quick Start](docs/getting-started/quickstart.md)
-- Windows에서 가장 안정적인 설치: [Windows WSL2 Setup](docs/getting-started/windows-wsl2.md)
-- Windows에서 Bash 없이 수동 설치: [Windows PowerShell Setup](docs/getting-started/windows-powershell.md)
-- Claude Code 연동: [Claude Code Configuration](docs/getting-started/claude-code.md)
-- 설치 후 첫 검증: [First Memory Flow](docs/getting-started/first-memory-flow.md)
-- 문제 해결: [Troubleshooting](docs/getting-started/troubleshooting.md)
+- 최소 실행만 빨리 확인: [Quick Start](getting-started/quickstart.md)
+- Windows에서 가장 안정적인 설치: [Windows WSL2 Setup](getting-started/windows-wsl2.md)
+- Windows에서 Bash 없이 수동 설치: [Windows PowerShell Setup](getting-started/windows-powershell.md)
+- Claude Code 연동: [Claude Code Configuration](getting-started/claude-code.md)
+- 설치 후 첫 검증: [First Memory Flow](getting-started/first-memory-flow.md)
+- 문제 해결: [Troubleshooting](getting-started/troubleshooting.md)
 
 ## 지원 정책
 
@@ -99,7 +99,7 @@ cp .env.example .env
 # .env 파일에서 DATABASE_URL, MEMENTO_ACCESS_KEY 등 필수 값 입력
 ```
 
-환경 변수 전체 목록은 [README.md — 환경 변수](README.md#환경-변수) 참조.
+환경 변수 전체 목록은 [README.md — 환경 변수](../README.md#환경-변수) 참조.
 
 ## 서버 실행
 
@@ -109,7 +109,7 @@ node server.js
 
 ## Claude Code 연결
 
-상세 설정은 [Claude Code Configuration](docs/getting-started/claude-code.md)을 참고한다.
+상세 설정은 [Claude Code Configuration](getting-started/claude-code.md)을 참고한다.
 
 ## 훅 기반 Context 자동 로드
 
