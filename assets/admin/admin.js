@@ -2109,6 +2109,19 @@ function renderSessionTable(sessions) {
   countText.textContent = "Showing " + sessions.length + " sessions";
   footer.appendChild(countText);
 
+  const btnWrap = document.createElement("div");
+  btnWrap.className = "flex gap-2";
+
+  const reflectAllBtn = document.createElement("button");
+  reflectAllBtn.className = "btn px-3 py-1.5 text-[10px] font-bold flex items-center gap-1 border-secondary/30 text-secondary";
+  reflectAllBtn.id = "session-reflect-all";
+  const reflectIcon = document.createElement("span");
+  reflectIcon.className = "material-symbols-outlined text-sm";
+  reflectIcon.textContent = "auto_fix_high";
+  reflectAllBtn.appendChild(reflectIcon);
+  reflectAllBtn.appendChild(document.createTextNode("REFLECT ALL"));
+  btnWrap.appendChild(reflectAllBtn);
+
   const cleanupBtn = document.createElement("button");
   cleanupBtn.className = "btn-primary px-3 py-1.5 text-[10px] font-bold flex items-center gap-1";
   cleanupBtn.id = "session-cleanup-footer";
@@ -2117,7 +2130,9 @@ function renderSessionTable(sessions) {
   cleanupIcon.textContent = "cleaning_services";
   cleanupBtn.appendChild(cleanupIcon);
   cleanupBtn.appendChild(document.createTextNode("CLEANUP"));
-  footer.appendChild(cleanupBtn);
+  btnWrap.appendChild(cleanupBtn);
+
+  footer.appendChild(btnWrap);
 
   wrap.appendChild(footer);
 
@@ -2479,6 +2494,18 @@ async function renderSessions(container) {
 
   document.getElementById("session-cleanup-btn")?.addEventListener("click", handleCleanup);
   document.getElementById("session-cleanup-footer")?.addEventListener("click", handleCleanup);
+
+  /* Event: reflect all unreflected sessions */
+  document.getElementById("session-reflect-all")?.addEventListener("click", async () => {
+    const r = await api("/sessions/reflect-all", { method: "POST" });
+    if (r.ok) {
+      const d = r.data ?? {};
+      showToast("Reflected " + (d.reflected ?? 0) + " sessions" + (d.failed ? " (" + d.failed + " failed)" : ""), "success");
+    } else {
+      showToast(r.data?.error ?? "Reflect all failed", "error");
+    }
+    renderSessions(container);
+  });
 }
 
 /* ================================================================
