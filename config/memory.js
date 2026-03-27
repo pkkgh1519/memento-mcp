@@ -56,6 +56,7 @@ export const MEMORY_CONFIG = {
     maxCoreFragments   : 15,
     maxWmFragments     : 10,
     typeSlots          : {
+      learning   : 3,
       preference : 5,
       error      : 5,
       procedure  : 5,
