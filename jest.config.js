@@ -4,14 +4,14 @@ export default {
       displayName: "unit",
       testEnvironment: "node",
       testMatch: [
-        "<rootDir>/tests/*.test.js",
-        "<rootDir>/tests/unit/*.test.js"
+        "<rootDir>/tests/*.test.js"
       ],
       testPathIgnorePatterns: [
         "/node_modules/",
         "/.worktrees/",
         "/tests/integration/",
-        "/tests/e2e/"
+        "/tests/e2e/",
+        "/tests/unit/"
       ]
     },
     {
