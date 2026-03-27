@@ -45,20 +45,46 @@ Quick entry points:
 - [Installation Guide](docs/INSTALL.en.md)
 - [AI Skill Reference](SKILL.md)
 
+## Table of Contents
+
+- [Quick Start](#quick-start)
+- [Supported Environments](#supported-environments)
+- [When You Need Claude Code](#when-you-need-claude-code)
+- [Overview](#overview)
+- [System Architecture](#system-architecture)
+- [Database Schema](#database-schema)
+- [Prompts](#prompts)
+- [Resources](#resources)
+- [3-Layer Search](#3-layer-search)
+- [TTL Tiers](#ttl-tiers)
+- [MCP Tools](#mcp-tools)
+- [Recommended Usage Flow](#recommended-usage-flow)
+- [MemoryEvaluator](#memoryevaluator)
+- [MemoryConsolidator](#memoryconsolidator)
+- [Contradiction Detection Pipeline](#contradiction-detection-pipeline)
+- [MEMORY_CONFIG](#memory_config)
+- [Environment Variables](#environment-variables)
+- [Switching Embedding Providers](#switching-embedding-providers)
+- [HTTP Endpoints](#http-endpoints)
+- [Tech Stack](#tech-stack)
+- [Tests](#tests)
+- [Installation](#installation)
+- [Why I Built This](#why-i-built-this)
+
 ## Quick Start
 
-Minimum setup:
+Minimum requirements:
 
 - Required: Node.js 20+, PostgreSQL, `vector` extension
 - Optional: Redis
-- Optional: embedding provider
+- Optional: Embedding provider
 - Optional: Claude Code integration
 
-Shortest bootstrap path:
+Shortest path to running:
 
 ```bash
 cp .env.example.minimal .env
-# Edit .env values, then load into current shell
+# Edit .env values, then export them to the shell
 export $(grep -v '^#' .env | grep '=' | xargs)
 npm install
 psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;"
@@ -66,229 +92,179 @@ psql "$DATABASE_URL" -f lib/memory/memory-schema.sql
 node server.js
 ```
 
-After the server starts, validate `remember`, `recall`, and `context` with [First Memory Flow](docs/getting-started/first-memory-flow.md).
+Once the server is up, verify `remember`, `recall`, and `context` calls via [First Memory Flow](docs/getting-started/first-memory-flow.md).
 
 ## Supported Environments
 
-| Environment | Recommendation | Start Here |
-|-------------|----------------|------------|
+| Environment | Recommendation | Getting Started |
+|-------------|----------------|-----------------|
 | Linux / macOS | Recommended | [Quick Start](docs/getting-started/quickstart.md) |
-| Windows + WSL2 | Best option | [Windows WSL2 Setup](docs/getting-started/windows-wsl2.md) |
+| Windows + WSL2 | Most recommended | [Windows WSL2 Setup](docs/getting-started/windows-wsl2.md) |
 | Windows + PowerShell | Limited support | [Windows PowerShell Setup](docs/getting-started/windows-powershell.md) |
 
-## When Claude Code Is Needed
+## When You Need Claude Code
 
-- If you only want to run the server: Claude Code configuration is not required
-- If you want Claude Code to call memory tools directly: use [Claude Code Configuration](docs/getting-started/claude-code.md)
-
----
+- Running the memento server standalone: No Claude Code configuration needed
+- Letting Claude Code use memory tools directly: [Claude Code Configuration](docs/getting-started/claude-code.md) required
 
 ## Overview
 
-Memento MCP is a fragment-based persistent memory server implementing the Model Context Protocol (MCP). It gives stateless language model agents durable long-term memory that persists across session boundaries.
+Memento MCP is an MCP (Model Context Protocol) based long-term memory server for AI agents. It persists important facts, decisions, error patterns, and procedures across sessions, restoring them when a new session begins.
 
-Agent knowledge is decomposed into discrete, typed **fragments** — atomic units of 1–3 sentences classified into six categories: `fact`, `decision`, `error`, `preference`, `procedure`, and `relation`. Retrieval uses a three-tier cascade: Redis Set intersection (L1), PostgreSQL GIN-indexed array queries (L2), and pgvector HNSW cosine similarity (L3), with composite ranking over importance and recency. A background worker evaluates fragment quality via Gemini CLI. A consolidation pipeline handles TTL tier transitions, importance decay, deduplication, and contradiction detection (pgvector similarity filtering → NLI classification via mDeBERTa ONNX → Gemini CLI escalation for ambiguous cases). Session termination triggers automatic reflection that converts session activity into structured fragments.
+Knowledge is decomposed into atomic units of 1-3 sentences called **fragments**. Storing entire session summaries would clutter the context window with irrelevant content and make it difficult to isolate specific information. By breaking knowledge into fragments, the system returns precisely what is needed at search time.
 
-The server exposes 12 MCP tools, supports MCP protocol versions 2024-11-05 through 2025-11-25, implements both Streamable HTTP and Legacy SSE transports, and provides OAuth 2.0 PKCE authentication. Default port: 57332.
+Fragments are classified into six types: `fact`, `decision`, `error`, `preference`, `procedure`, `relation`. Each type has different default importance and decay rates.
 
----
+![Knowledge Network](assets/images/knowledge-graph.png)
 
-## Table of Contents
-
-1. Introduction
-2. System Architecture
-3. Persistence Layer: Schema Design and Indexing
-4. Retrieval Architecture: The Three-Tier Cascade
-5. Fragment Lifecycle: TTL Model and Scope Semantics
-6. MCP Tool Interface
-7. Asynchronous Quality Evaluation: MemoryEvaluator
-8. Consolidation Pipeline: MemoryConsolidator
-9. Fault Tolerance and Degradation Behavior
-10. Configuration
-11. Deployment
-12. Endpoint Reference
-
----
-
-## 1. Introduction
-
-Language model sessions are stateless: context accumulated during one session is lost when the session closes. Prepending full conversation history to the context window is impractical — it wastes tokens and degrades signal-to-noise ratio as history grows.
-
-Memento MCP addresses this by persisting knowledge as discrete, independently retrievable **fragments** rather than monolithic transcripts. Each fragment is a typed, keyword-annotated, vector-embedded record linked to related fragments via explicit typed edges. A lifecycle management policy governs TTL tier assignment, importance score decay, and eventual expiration.
-
-![Knowledge Graph](assets/images/knowledge-graph.png)
+Search passes through three layers in sequence. Redis Set intersection finds keyword matches, PostgreSQL GIN indexes perform array searches, and pgvector HNSW computes cosine similarity. Storing memories well is only half the battle -- retrieving them effectively matters just as much. A memory that cannot be found is no different from one that never existed.
 
 ![Token Efficiency](assets/images/token-efficiency.png)
 
+Embeddings are not generated inline at remember time. The EmbeddingWorker consumes fragment IDs from a Redis queue, generates embeddings asynchronously, and emits an `embedding_ready` event upon completion. GraphLinker subscribes to this event and automatically creates relationships between similar fragments. All fragments are embedding targets regardless of importance.
+
+An asynchronous quality evaluation worker monitors new fragments in the background. It calls Gemini CLI to review the content's soundness and updates the utility_score. A periodic maintenance pipeline handles importance decay, TTL transitions, duplicate merging, contradiction detection, and orphan link cleanup. Contradiction detection operates as a 3-stage hybrid -- pgvector similarity filter, NLI (Natural Language Inference) classification, and Gemini CLI escalation. NLI resolves clear logical contradictions at low cost immediately, while only cases that NLI finds ambiguous (numerical/domain contradictions) are escalated to Gemini. When a session ends, reflect runs automatically and persists session activities as structured fragments. Memory does not end at storage. It must be managed.
+
+MCP protocol versions 2025-11-25, 2025-06-18, 2025-03-26, and 2024-11-05 are supported. Streamable HTTP and Legacy SSE are served simultaneously, with built-in OAuth 2.0 PKCE authentication. The server listens on port 57332.
+
 ---
 
-## 2. System Architecture
-
-The system decomposes into three structural layers: the HTTP transport layer, the MCP protocol and tool dispatch layer, and the memory subsystem proper.
-
-```
-┌────────────────────────────────────────────────────────────────────┐
-│                           MCP Client                               │
-└───────────────────────────────┬────────────────────────────────────┘
-                                │ HTTP (Streamable / Legacy SSE)
-┌───────────────────────────────▼────────────────────────────────────┐
-│               HTTP Transport Layer  (server.js)                    │
-│  POST /mcp   GET /mcp   DELETE /mcp   GET /sse   POST /message     │
-│  GET /health   GET /metrics   OAuth 2.0 endpoints                  │
-└───────────────────────────────┬────────────────────────────────────┘
-                                │ JSON-RPC 2.0 dispatch
-┌───────────────────────────────▼────────────────────────────────────┐
-│         Protocol & Tool Dispatch  (jsonrpc.js + tool-registry.js)  │
-│                       12 MCP Memory Tools                          │
-└──────────────┬────────────────────────────────────────────────────┘
-               │
-┌──────────────▼───────────────────────────────────────────────────┐
-│                 Memory Subsystem  (lib/memory/)                    │
-│                                                                    │
-│  MemoryManager  ──►  FragmentFactory  (PII mask, TF keywords,     │
-│       │                               TTL inference, hash)        │
-│       ├──►  FragmentStore  ◄──────────────────────────────────┐   │
-│       │        │  (PostgreSQL CRUD + Redis L1 sync)           │   │
-│       └──►  FragmentSearch                                    │   │
-│                │  L1: Redis SINTER                            │   │
-│                │  L2: PostgreSQL GIN &&                       │   │
-│                └─►L3: pgvector HNSW cosine                    │   │
-└────────────────────────────┬──────────────────────────────────┘   │
-                             │              Background Workers       │
-               ┌─────────────┴──────┐   ┌────────────────────────┐  │
-               │       Redis        │   │   MemoryEvaluator      │  │
-               │  L1 keyword Sets   │   │   (Gemini CLI)         │  │
-               │  Working Memory    │   │   5s polling queue     │  │
-               │  Evaluation queue  │   ├────────────────────────┤  │
-               │  Session Activity  │   │   MemoryConsolidator   ├──┘
-               └────────────────────┘   │   18-step pipeline     │
-                                        │   NLI + Gemini hybrid  │
-               ┌────────────────────┐   ├────────────────────────┤
-               │   NLI Classifier   │   │   AutoReflect          │
-               │  mDeBERTa ONNX CPU │───│   Session close hook   │
-               └────────────────────┘   └────────────────────────┘
-               ┌────────────────────────┴────────────────────────┐
-               │         PostgreSQL  (agent_memory schema)        │
-               │  fragments (pgvector HNSW + GIN + RLS)          │
-               │  fragment_links     fragment_versions            │
-               │  tool_feedback      task_feedback                │
-               └──────────────────────────────────────────────────┘
-```
-
-### 2.1 System Architecture Diagram
+## System Architecture
 
 ![System Architecture](assets/images/memento_architecture.svg)
 
-### 2.2 HTTP Transport Layer
+```
+server.js  (HTTP server)
+    |
+    +-- POST /mcp          Streamable HTTP -- JSON-RPC receiver
+    +-- GET  /mcp          Streamable HTTP -- SSE stream
+    +-- DELETE /mcp        Streamable HTTP -- Session termination
+    +-- GET  /sse          Legacy SSE -- Session creation
+    +-- POST /message      Legacy SSE -- JSON-RPC receiver
+    +-- GET  /health       Health check
+    +-- GET  /metrics      Prometheus metrics
+    +-- GET  /authorize    OAuth 2.0 authorization endpoint
+    +-- POST /token        OAuth 2.0 token endpoint
+    +-- GET  /.well-known/oauth-authorization-server
+    +-- GET  /.well-known/oauth-protected-resource
+    |
+    +-- lib/jsonrpc.js        JSON-RPC 2.0 parsing and method dispatch
+    +-- lib/tool-registry.js  12 memory tool registration and routing
+    |
+    +-- lib/memory/
+            +-- MemoryManager.js          Business logic facade (singleton)
+            +-- FragmentFactory.js        Fragment creation, validation, PII masking
+            +-- FragmentStore.js          PostgreSQL CRUD facade (delegates to FragmentReader + FragmentWriter)
+            +-- FragmentReader.js         Fragment reads (getById, getByIds, getHistory, searchByKeywords, searchBySemantic)
+            +-- FragmentWriter.js         Fragment writes (insert, update, delete, incrementAccess, touchLinked)
+            +-- FragmentSearch.js         3-layer search orchestration (structural: L1->L2, semantic: L1->L2||L3 RRF merge)
+            +-- FragmentIndex.js          Redis L1 index management, getFragmentIndex() singleton factory
+            +-- EmbeddingWorker.js        Redis queue-based async embedding worker (EventEmitter)
+            +-- GraphLinker.js            Embedding-ready event subscriber for auto-linking + retroactive linking + Hebbian co-retrieval linking
+            +-- MemoryConsolidator.js     18-step maintenance pipeline (NLI + Gemini hybrid)
+            +-- MemoryEvaluator.js        Async Gemini CLI quality evaluation worker (singleton)
+            +-- NLIClassifier.js          NLI-based contradiction classifier (mDeBERTa ONNX, CPU)
+            +-- SessionActivityTracker.js Per-session tool call/fragment activity tracking (Redis)
+            +-- ConflictResolver.js       Conflict detection, supersede, autoLinkOnRemember (topic-based structural linking)
+            +-- SessionLinker.js          Session fragment consolidation, auto-linking, cycle detection
+            +-- LinkStore.js              Fragment link management (fragment_links CRUD + RCA chains)
+            +-- FragmentGC.js             Fragment expiration/deletion, exponential decay, TTL tier transitions (permanent parole + EMA batch decay)
+            +-- ConsolidatorGC.js         Feedback reports, stale fragment collection/cleanup, long fragment splitting, feedback-based correction
+            +-- ContradictionDetector.js  Contradiction detection, supersede relation detection, pending queue processing
+            +-- AutoReflect.js            Session-end auto reflect orchestrator
+            +-- decay.js                  Exponential decay half-life constants, pure computation functions, ACT-R EMA activation approximation (`updateEmaActivation`, `computeEmaRankBoost`), EMA-based dynamic half-life (`computeDynamicHalfLife`), age-weighted utility score (`computeUtilityScore`)
+            +-- SearchMetrics.js          L1/L2/L3/total layer-level latency collection (Redis circular buffer, P50/P90/P99)
+            +-- SearchEventAnalyzer.js    Search event analysis, query pattern tracking (reads from SearchEventRecorder)
+            +-- SearchEventRecorder.js    FragmentSearch.search() result to search_events table recording
+            +-- EvaluationMetrics.js      tool_feedback-based implicit Precision@5 and downstream task success rate computation
+            +-- memory-schema.sql         PostgreSQL schema definition
+            +-- migration-001-temporal.sql Temporal schema migration (valid_from/to/superseded_by)
+            +-- migration-002-decay.sql   Decay idempotency migration (last_decay_at)
+            +-- migration-003-api-keys.sql API key management tables (api_keys, api_key_usage)
+            +-- migration-004-key-isolation.sql fragments.key_id column (API key-based memory isolation)
+            +-- migration-005-gc-columns.sql   GC policy hardening indexes (utility_score, access_count)
+            +-- migration-006-superseded-by-constraint.sql fragment_links CHECK adds superseded_by
+            +-- migration-007-link-weight.sql  fragment_links.weight column (link strength quantification)
+            +-- migration-008-morpheme-dict.sql Morpheme dictionary table (morpheme_dict)
+            +-- migration-009-co-retrieved.sql fragment_links CHECK adds co_retrieved (Hebbian linking)
+            +-- migration-010-ema-activation.sql fragments.ema_activation/ema_last_updated columns
+            +-- migration-011-key-groups.sql  API key group N:M mapping (api_key_groups, api_key_group_members)
+            +-- migration-012-quality-verified.sql fragments.quality_verified column (MemoryEvaluator verdict persistence)
+            +-- migration-013-search-events.sql search_events table (search query/result observability)
+```
 
-`server.js` implements a Node.js HTTP server handling twelve distinct endpoint routes. Two MCP transports are supported concurrently:
+Supporting modules:
 
-- **Streamable HTTP** (MCP specification §2025-03-26 and later): `POST /mcp` receives JSON-RPC 2.0 request bodies; `GET /mcp` establishes a server-sent event stream for server-initiated pushes; `DELETE /mcp` terminates sessions explicitly.
-- **Legacy SSE** (MCP specification §2024-11-05): `GET /sse` creates a session and opens the SSE stream; `POST /message?sessionId=<id>` receives JSON-RPC requests whose responses are delivered over the SSE channel.
+```
+lib/
++-- config.js          Environment variables exposed as constants
++-- auth.js            Bearer token validation
++-- oauth.js           OAuth 2.0 PKCE authorization/token handling
++-- sessions.js        Streamable/Legacy SSE session lifecycle
++-- redis.js           ioredis client (Sentinel support)
++-- gemini.js          Google Gemini API/CLI client (geminiCLIJson, isGeminiCLIAvailable)
++-- compression.js     Response compression (gzip/deflate)
++-- metrics.js         Prometheus metric collection (prom-client)
++-- logger.js          Winston logger (daily rotate)
++-- rate-limiter.js    IP-based sliding window rate limiter
++-- rbac.js            RBAC authorization (read/write/admin tool-level permissions)
++-- http-handlers.js   MCP/SSE HTTP handlers (Admin routes separated into admin-routes.js)
++-- scheduler.js       Periodic task scheduler (setInterval task management)
++-- utils.js           Origin validation, JSON body parsing (2MB cap), SSE output
 
-Operational endpoints: `GET /health` returns structured health status for PostgreSQL query execution (`SELECT 1`), Redis connectivity, and active session counts. When `REDIS_ENABLED=false`, Redis reports `{ status: "disabled" }` without triggering degraded mode. `GET /metrics` serves Prometheus-compatible metrics collected via `prom-client`.
+lib/admin/
++-- ApiKeyStore.js     API key CRUD, group CRUD, authentication verification (SHA-256 hash storage, raw key returned once only)
++-- admin-auth.js      Admin auth routes (POST /auth, session cookie issuance)
++-- admin-keys.js      API key management routes
++-- admin-memory.js    Memory operations routes (overview, fragments, anomalies, graph)
++-- admin-sessions.js  Session management routes
++-- admin-logs.js      Log viewing routes
++-- admin-export.js    Fragment export/import routes (export, import)
 
-OAuth 2.0 endpoints: `GET /.well-known/oauth-authorization-server`, `GET /.well-known/oauth-protected-resource`, `GET /authorize`, `POST /token`. PKCE (`code_challenge` / `code_verifier`) is required for the authorization code flow.
+assets/admin/
++-- index.html         Admin SPA app shell (login form + container)
++-- admin.css          Admin UI stylesheet
++-- admin.js           Admin UI logic (7 navigation sections: overview, API keys, groups, memory ops, sessions, logs, knowledge graph)
 
-### 2.2 Protocol and Dispatch Layer
+lib/http/
++-- helpers.js         HTTP SSE stream helpers and request parsing utilities
 
-`lib/jsonrpc.js` parses incoming JSON-RPC 2.0 envelopes and dispatches to registered method handlers. `lib/tool-registry.js` registers the twelve memory tools exported from `lib/tools/memory.js`. Database access utilities (`lib/tools/db.js`), embedding generation (`lib/tools/embedding.js`), and access statistics (`lib/tools/stats.js`) are internal dependencies not exposed through the MCP tool interface.
+lib/logging/
++-- audit.js           Audit logging and access history recording
+```
 
-### 2.3 Memory Subsystem
+Tool implementations are separated into `lib/tools/`.
 
-`lib/memory/` contains all memory-domain logic:
+```
+lib/tools/
++-- memory.js    12 MCP tool handlers
++-- memory-schemas.js  Tool schema definitions (inputSchema)
++-- db.js        PostgreSQL connection pool, RLS-applied query helper (not exposed via MCP)
++-- db-tools.js  MCP DB tool handlers (per-tool logic split from db.js)
++-- embedding.js OpenAI text embedding generation
++-- stats.js     Access statistics collection and storage
++-- prompts.js   MCP Prompts definitions (analyze-session, retrieve-relevant-memory, etc.)
++-- resources.js MCP Resources definitions (memory://stats, memory://topics, etc.)
++-- index.js     Tool handler exports
+```
 
-| Module | Responsibility |
-|--------|----------------|
-| `MemoryManager.js` | Business logic facade. Singleton. Coordinates all memory operations. |
-| `FragmentFactory.js` | Fragment construction, schema validation, keyword extraction, PII masking, TTL inference. |
-| `FragmentStore.js` | Facade: delegates reads to `FragmentReader.js` and writes to `FragmentWriter.js`; maintains Redis L1 index synchronization interface. |
-| `FragmentReader.js` | Read-only PostgreSQL operations (getById, getByIds, searchByKeywords, ownership checks). |
-| `FragmentWriter.js` | Write-path PostgreSQL operations (insert, update, delete) with Redis L1 sync. |
-| `FragmentSearch.js` | Three-tier retrieval orchestration (structured: L1→L2; semantic: L1→L2‖L3 RRF merge). Per-layer latency instrumentation via `SearchMetrics`. |
-| `FragmentIndex.js` | Redis L1 index management (Set operations per keyword). |
-| `EmbeddingWorker.js` | Redis queue-based async embedding generation worker (EventEmitter). Emits `embedding_ready` on completion. |
-| `GraphLinker.js` | Subscribes to `embedding_ready`; generates typed edges for newly embedded fragments. Retroactive linking during consolidation. Hebbian co-retrieval linking (`buildCoRetrievalLinks`). |
-| `MorphemeIndex.js` | Morpheme-level embedding lookup via `morpheme_dict` table. L3 fallback when semantic results are sparse. |
-| `MemoryConsolidator.js` | Eighteen-step lifecycle maintenance pipeline (NLI + Gemini CLI hybrid contradiction detection, feedback-adaptive importance calibration). |
-| `ConflictResolver.js` | Conflict detection at `remember` time; auto-linking and supersede processing. |
-| `SessionLinker.js` | Session fragment integration, automatic linking, cycle detection. |
-| `LinkStore.js` | Fragment link management (`fragment_links` CRUD + RCA chain traversal). |
-| `FragmentGC.js` | Fragment expiration deletion, exponential decay, TTL tier transitions. |
-| `ConsolidatorGC.js` | Feedback reports, stale fragment collection/cleanup, long fragment splitting, feedback-based calibration. |
-| `ContradictionDetector.js` | Contradiction detection, supersession detection, pending queue processing. |
-| `MemoryEvaluator.js` | Asynchronous Gemini CLI quality assessment worker. Singleton. |
-| `NLIClassifier.js` | Natural Language Inference classifier (mDeBERTa ONNX, CPU-only). Entailment/contradiction/neutral labeling for contradiction detection Stage 2. |
-| `SessionActivityTracker.js` | Per-session tool call and fragment activity tracking (Redis Hash). TTL 24h. |
-| `AutoReflect.js` | Automatic `reflect` orchestrator triggered on session termination. Gemini CLI summary with minimal fallback. |
-| `decay.js` | Half-life constants per fragment type, pure exponential decay function, and ACT-R EMA activation approximation (`updateEmaActivation`, `computeEmaRankBoost`). |
-| `SearchMetrics.js` | Per-layer latency collector (L1/L2/L3/total). Redis circular buffer (100 samples). Exposes P50/P90/P99. |
-| `SearchEventAnalyzer.js` | Analyzes search events, tracks query patterns (reads from search_events table). |
-| `SearchEventRecorder.js` | Records FragmentSearch.search() results to search_events PostgreSQL table. |
-| `normalize-vectors.js` | One-time migration script to L2-normalize existing embeddings in the database. |
-| `memory-schema.sql` | PostgreSQL DDL for the `agent_memory` schema. |
-| `migration-001-temporal.sql` | Schema migration: adds `valid_from`, `valid_to`, `superseded_by` columns and temporal indexes. |
-| `migration-002-decay.sql` | Schema migration: adds `last_decay_at` column for idempotent decay tracking. |
-| `migration-003-api-keys.sql` | Schema migration: creates `api_keys` and `api_key_usage` tables for API key management. |
-| `migration-004-key-isolation.sql` | Schema migration: adds `key_id` column to `fragments` for per-API-key memory isolation. |
-| `migration-005-gc-columns.sql` | Schema migration: adds auxiliary indexes on `utility_score` and `access_count` to reinforce GC policy queries. |
-| `migration-006-superseded-by-constraint.sql` | Schema migration: extends `fragment_links.relation_type` CHECK to include `superseded_by`. |
-| `migration-007-link-weight.sql` | Schema migration: adds `weight` column to `fragment_links` for link strength tracking. |
-| `migration-008-morpheme-dict.sql` | Schema migration: creates `morpheme_dict` table for morpheme-level embedding lookup. |
-| `migration-009-co-retrieved.sql` | Schema migration: extends `fragment_links.relation_type` CHECK to include `co_retrieved` (Hebbian co-retrieval links). |
-| `migration-010-ema-activation.sql` | Schema migration: adds `ema_activation` and `ema_last_updated` columns to `fragments` for ACT-R EMA tracking. |
-| `migration-011-key-groups.sql` | Schema migration: creates `api_key_groups` and `api_key_group_members` tables for API key group management. |
-| `migration-012-quality-verified.sql` | Schema migration: adds `quality_verified` column to `fragments` for MemoryEvaluator assessment results. |
-| `migration-013-search-events.sql` | Schema migration: creates `search_events` table for search query and result observability. |
-| `migration-007-flexible-embedding-dims.js` | Schema migration script: converts the `embedding` column to `halfvec(N)` for models with >2000 dimensions (pgvector ≥0.7.0 required). Run with `EMBEDDING_DIMENSIONS=<N>`. |
-| `backfill-embeddings.js` | One-time script to regenerate embeddings for all fragments lacking them; use after a provider or dimension change. |
-| `migrate.js` | DB migration runner with transaction safety and `schema_migrations` tracking. Run via `npm run migrate`. |
+One-time utility scripts are in `scripts/`.
 
-**Admin module:**
+```
+scripts/
++-- backfill-embeddings.js                       Embedding backfill (one-time)
++-- normalize-vectors.js                         Vector L2 normalization (one-time)
++-- migrate.js                                   DB migration runner (schema_migrations-based incremental)
++-- migration-007-flexible-embedding-dims.js     Embedding dimension migration
+```
 
-| Module | Responsibility |
-|--------|----------------|
-| `lib/admin/ApiKeyStore.js` | API key CRUD operations and authentication verification. SHA-256 hash-only storage; raw key returned once at creation. |
-| `lib/admin/admin-auth.js` | Admin authentication routes (POST /auth, session cookie issuance) |
-| `lib/admin/admin-keys.js` | API key management routes |
-| `lib/admin/admin-memory.js` | Memory operations routes (overview, fragments, anomalies, graph) |
-| `lib/admin/admin-sessions.js` | Session management routes |
-| `lib/admin/admin-logs.js` | Log viewer routes |
-| `lib/admin/admin-export.js` | Fragment export/import routes |
-| `assets/admin/index.html` | Admin SPA app shell (login form + container). |
-| `assets/admin/admin.css` | Admin UI stylesheet. |
-| `assets/admin/admin.js` | Admin UI logic with 7 navigation areas: Overview, API Keys, Groups, Memory Operations, Sessions, Logs, Knowledge Graph. |
-
-Supporting infrastructure modules:
-
-| Module | Responsibility |
-|--------|----------------|
-| `lib/config.js` | Environment variable binding and typed constant export |
-| `lib/auth.js` | Bearer token verification |
-| `lib/oauth.js` | OAuth 2.0 PKCE authorization and token endpoint logic |
-| `lib/sessions.js` | Session lifecycle management for both transport types; async auto-reflect on close |
-| `lib/redis.js` | `ioredis` client initialization with optional Sentinel support |
-| `lib/gemini.js` | Google Gemini API/CLI client (CLI preferred when available) |
-| `lib/compression.js` | Response compression (gzip / deflate) |
-| `lib/metrics.js` | Prometheus metric collectors (`prom-client`) |
-| `lib/logger.js` | Winston structured logger with daily log rotation |
-| `lib/rate-limiter.js` | IP-based sliding window rate limiter |
-| `lib/rbac.js` | RBAC permission enforcement (read/write/admin tool-level permissions) |
-| `lib/utils.js` | Origin validation, JSON body parsing (2MB limit), SSE framing |
-| `lib/http-handlers.js` | HTTP request handlers for MCP and operational endpoints (health, metrics, OAuth, SSE); excludes Admin routes |
-| `lib/scheduler.js` | Periodic task scheduler (manages all setInterval jobs after server start) |
-| `lib/tools/memory-schemas.js` | Tool schema definitions (`inputSchema` for all 12 memory tools) |
-| `lib/tools/db-tools.js` | MCP DB tool handlers (separated from `lib/tools/db.js`) |
-| `lib/http/helpers.js` | HTTP SSE/request helpers |
-| `lib/logging/audit.js` | Audit and access logging |
-
-External configuration: `config/memory.js` exports `MEMORY_CONFIG`, a module-level constant governing composite ranking weights and stale detection thresholds, decoupled from server source to permit adjustment without code modification.
+`config/memory.js` is a separate configuration file for the memory system. It holds time-semantic composite ranking weights, stale thresholds, embedding worker settings, context injection, pagination, and GC policies.
 
 ---
 
-## 3. Persistence Layer: Schema Design and Indexing
+## Database Schema
 
-All persistent state resides in PostgreSQL under the `agent_memory` schema. The DDL is defined in `lib/memory/memory-schema.sql`.
+The schema name is `agent_memory`. Schema file: `lib/memory/memory-schema.sql`.
 
 ```mermaid
 erDiagram
@@ -306,22 +282,23 @@ erDiagram
         text agent_id "RLS Key"
         integer access_count
         real utility_score
-        vector embedding "OpenAI 1536, L2-normalized"
+        vector embedding "OpenAI 1536, L2 normalized"
         boolean is_anchor
-        timestamptz valid_from "Temporal validity start"
-        timestamptz valid_to "Temporal validity end (NULL=current)"
+        timestamptz valid_from "Temporal valid start"
+        timestamptz valid_to "Temporal valid end (NULL=current)"
         text superseded_by "Superseding fragment ID"
-        timestamptz last_decay_at "Last decay application timestamp"
+        timestamptz last_decay_at "Last decay timestamp"
         text key_id "API key isolation (NULL=master)"
         float ema_activation "ACT-R EMA activation approximation (DEFAULT 0.0)"
-        timestamptz ema_last_updated "Last EMA update timestamp"
+        timestamptz ema_last_updated "EMA last update timestamp"
+        boolean quality_verified "MemoryEvaluator verdict: NULL=unevaluated, TRUE=keep, FALSE=downgrade/discard"
     }
     fragment_links {
         bigserial id PK
         text from_id FK
         text to_id FK
         text relation_type
-        integer weight "Link strength (co_retrieved accumulates +1)"
+        integer weight "Link strength (co_retrieved count accumulation)"
     }
     tool_feedback {
         bigserial id PK
@@ -337,105 +314,109 @@ erDiagram
     }
 ```
 
-### 3.1 The `fragments` Table
+### fragments
 
-The central relation. Each row represents one atomic unit of agent knowledge.
+The store for all fragments. This is the core table of the system.
 
-| Column | Type | Constraints | Semantics |
-|--------|------|-------------|-----------|
-| `id` | TEXT | PRIMARY KEY | Fragment identifier. Format: `frag-<16 hex chars>` (crypto.randomBytes) |
-| `content` | TEXT | NOT NULL | Knowledge content. ≤300 characters; truncated with ellipsis on overflow |
-| `topic` | TEXT | NOT NULL | Categorical label (e.g., `database`, `deployment`, `security`) |
-| `keywords` | TEXT[] | NOT NULL DEFAULT '{}' | Search keywords; GIN-indexed. Auto-extracted via TF-based ranking when omitted |
-| `type` | TEXT | NOT NULL, CHECK | `fact` / `decision` / `error` / `preference` / `procedure` / `relation` |
-| `importance` | REAL | CHECK 0.0–1.0 | Type-specific defaults: `preference`=0.95, `error`=0.9, `decision`=0.8, `procedure`=0.7, `relation`=0.6, `fact`=0.5 |
-| `content_hash` | TEXT | UNIQUE NOT NULL | First 16 hex characters of SHA-256 of the redacted, truncated content |
-| `source` | TEXT | | Provenance identifier (session ID, tool name, file path) |
-| `linked_to` | TEXT[] | DEFAULT '{}' | Adjacent fragment IDs; GIN-indexed for graph traversal |
-| `agent_id` | TEXT | NOT NULL DEFAULT 'default' | Agent namespace; RLS isolation key |
-| `access_count` | INTEGER | DEFAULT 0 | Retrieval frequency counter; input to `utility_score` computation |
-| `accessed_at` | TIMESTAMPTZ | | Timestamp of most recent retrieval |
-| `created_at` | TIMESTAMPTZ | DEFAULT NOW() | Creation timestamp |
-| `ttl_tier` | TEXT | CHECK | `hot` / `warm` / `cold` / `permanent`. Inferred by `FragmentFactory._inferTTL` at creation |
-| `estimated_tokens` | INTEGER | DEFAULT 0 | Token count under cl100k_base encoding; `chars / 4` approximation on encoder unavailability |
-| `utility_score` | REAL | DEFAULT 1.0 | Composite utility estimate; updated by `MemoryEvaluator` and `MemoryConsolidator` |
-| `verified_at` | TIMESTAMPTZ | DEFAULT NOW() | Timestamp of last quality assessment |
-| `embedding` | vector(1536) | | Dense vector via OpenAI `text-embedding-3-small`; L2-normalized to unit length before storage; NULL until generated asynchronously |
-| `is_anchor` | BOOLEAN | DEFAULT FALSE | When `TRUE`: exempt from decay, TTL demotion, and expiration deletion |
-| `valid_from` | TIMESTAMPTZ | DEFAULT NOW() | Temporal validity interval start. Lower bound for `asOf` point-in-time queries. |
-| `valid_to` | TIMESTAMPTZ | | Temporal validity interval end. NULL indicates the currently active record. |
-| `superseded_by` | TEXT | | ID of the fragment that supersedes this one. |
-| `last_decay_at` | TIMESTAMPTZ | | Timestamp of most recent decay application. Enables idempotent decay: Δt is computed from this column rather than `created_at`. NULL triggers fallback to `COALESCE(accessed_at, created_at, NOW())`. |
-| `key_id` | TEXT | FK → api_keys.id, ON DELETE SET NULL | Per-API-key memory isolation. NULL indicates the fragment was stored via the master key (`MEMENTO_ACCESS_KEY`) and is only accessible to master key requests. A non-null value restricts access to the specific API key that stored it. |
-| `ema_activation` | FLOAT | DEFAULT 0.0 | ACT-R baseline activation EMA approximation. Updated by `incrementAccess()` via: `α × (Δt_sec)^{−0.5} + (1−α) × prev`, α=0.3. Used in `_computeRankScore()` to boost frequently-retrieved fragments. |
-| `ema_last_updated` | TIMESTAMPTZ | | Timestamp of last EMA update. NULL triggers fallback to `created_at − 1 day`. |
+| Column | Type | Constraint | Description |
+|--------|------|------------|-------------|
+| id | TEXT | PRIMARY KEY | Fragment unique identifier |
+| content | TEXT | NOT NULL | Memory content body (300 characters recommended, atomic 1-3 sentences) |
+| topic | TEXT | NOT NULL | Topic label (e.g., database, deployment, security) |
+| keywords | TEXT[] | NOT NULL DEFAULT '{}' | Search keyword array (GIN indexed) |
+| type | TEXT | NOT NULL, CHECK | fact / decision / error / preference / procedure / relation |
+| importance | REAL | 0.0~1.0 CHECK | Importance. Defaults per type, decayed by MemoryConsolidator |
+| content_hash | TEXT | UNIQUE | SHA hash-based duplicate prevention |
+| source | TEXT | | Source identifier (session ID, tool name, etc.) |
+| linked_to | TEXT[] | DEFAULT '{}' | Connected fragment ID list (GIN indexed) |
+| agent_id | TEXT | NOT NULL DEFAULT 'default' | RLS isolation agent ID |
+| access_count | INTEGER | DEFAULT 0 | Recall count -- factored into utility_score |
+| accessed_at | TIMESTAMPTZ | | Last recall timestamp |
+| created_at | TIMESTAMPTZ | DEFAULT NOW() | Creation timestamp |
+| ttl_tier | TEXT | CHECK | hot / warm (default) / cold / permanent |
+| estimated_tokens | INTEGER | DEFAULT 0 | cl100k_base token count -- used for tokenBudget calculation |
+| utility_score | REAL | DEFAULT 1.0 | Usefulness score updated by MemoryEvaluator/MemoryConsolidator |
+| verified_at | TIMESTAMPTZ | DEFAULT NOW() | Last quality verification timestamp |
+| embedding | vector(1536) | | OpenAI text-embedding-3-small vector. L2-normalized (unit vector) before storage |
+| is_anchor | BOOLEAN | DEFAULT FALSE | When true, exempt from decay, TTL demotion, and expiration deletion |
+| valid_from | TIMESTAMPTZ | DEFAULT NOW() | Temporal validity start. Lower bound for `asOf` queries |
+| valid_to | TIMESTAMPTZ | | Temporal validity end. NULL means currently valid |
+| superseded_by | TEXT | | ID of the fragment that supersedes this one |
+| last_decay_at | TIMESTAMPTZ | | Last decay application timestamp. When NULL, falls back to accessed_at/created_at |
+| key_id | TEXT | FK -> api_keys.id, ON DELETE SET NULL | API key-based memory isolation. NULL means stored via master key (MEMENTO_ACCESS_KEY). When set, only that API key can query the fragment |
+| ema_activation | FLOAT | DEFAULT 0.0 | ACT-R base-level activation EMA approximation. Updated on `incrementAccess()` via `alpha * (dt_sec)^{-0.5} + (1-alpha) * prev` (alpha=0.3). Not updated on L1 fallback path (noEma=true). Used as importance boost in `_computeRankScore()` |
+| ema_last_updated | TIMESTAMPTZ | | EMA last update timestamp. Falls back to created_at when NULL |
+| quality_verified | BOOLEAN | DEFAULT NULL | MemoryEvaluator quality verdict. NULL=unevaluated, TRUE=keep (verified), FALSE=downgrade/discard (rejected). Used in permanent promotion Circuit Breaker |
 
-**Index inventory:** `content_hash` (UNIQUE B-tree); `topic` (B-tree); `type` (B-tree); `keywords` (GIN); `importance DESC` (B-tree); `created_at DESC` (B-tree); `agent_id` (B-tree); `linked_to` (GIN); `(ttl_tier, created_at)` (composite B-tree); `source` (B-tree); `verified_at` (B-tree); `is_anchor WHERE is_anchor = TRUE` (partial B-tree); `valid_from` (B-tree); `(topic, type) WHERE valid_to IS NULL` (partial B-tree); `id WHERE valid_to IS NULL` (partial UNIQUE).
+Index list: content_hash (UNIQUE), topic (B-tree), type (B-tree), keywords (GIN), importance DESC (B-tree), created_at DESC (B-tree), agent_id (B-tree), linked_to (GIN), (ttl_tier, created_at) (B-tree), source (B-tree), verified_at (B-tree), is_anchor WHERE TRUE (partial index), valid_from (B-tree), (topic, type) WHERE valid_to IS NULL (partial index), id WHERE valid_to IS NULL (partial UNIQUE).
 
-**HNSW vector index:** Conditional on `embedding IS NOT NULL`. Parameters: `m=16` (neighbor connections per node), `ef_construction=64` (search depth during index build), distance function `vector_cosine_ops`. Adjust `ef_construction` upward to improve recall at the cost of longer build time.
+The HNSW vector index is created as a conditional index on `embedding IS NOT NULL`. Parameters: m=16 (neighbor connections), ef_construction=64 (index build search depth), distance function vector_cosine_ops.
 
-### 3.2 The `fragment_links` Table
+### fragment_links
 
-Typed edge relation between fragments. The `linked_to` array on `fragments` provides fast single-hop adjacency; this table provides a normalized, queryable representation for relational operations and graph traversal.
+A dedicated table for the relationship graph between fragments. Exists alongside the linked_to array in the fragments table.
 
-| Column | Type | Constraints |
+| Column | Type | Description |
 |--------|------|-------------|
-| `id` | BIGSERIAL | PRIMARY KEY |
-| `from_id` | TEXT | REFERENCES fragments(id) ON DELETE CASCADE |
-| `to_id` | TEXT | REFERENCES fragments(id) ON DELETE CASCADE |
-| `relation_type` | TEXT | CHECK: `related` / `caused_by` / `resolved_by` / `part_of` / `contradicts` / `superseded_by` / `co_retrieved` |
-| `weight` | INTEGER | Link strength. `co_retrieved` links increment +1 on each co-recall event; defaults to 1. |
-| `created_at` | TIMESTAMPTZ | DEFAULT NOW() |
+| id | BIGSERIAL PK | Auto-increment identifier |
+| from_id | TEXT | Source fragment (ON DELETE CASCADE) |
+| to_id | TEXT | Target fragment (ON DELETE CASCADE) |
+| relation_type | TEXT | related / caused_by / resolved_by / part_of / contradicts / superseded_by / co_retrieved |
+| weight | INTEGER | Link strength. `co_retrieved` relations increment +1 on each co-recall. Default 1 |
+| created_at | TIMESTAMPTZ | Relation creation timestamp |
 
-UNIQUE constraint on `(from_id, to_id)` prevents duplicate edges — co-retrieval events increment `weight` instead of inserting a new row. B-tree indexes on both `from_id` and `to_id`.
+A UNIQUE constraint on (from_id, to_id) prevents duplicate links; instead, weight is incremented.
 
-`co_retrieved` links are created asynchronously by `GraphLinker.buildCoRetrievalLinks()` whenever a `recall` call returns ≥2 fragments in the same session. This implements a Hebbian associative learning mechanism: fragment pairs that are frequently co-retrieved accumulate higher `weight` values, strengthening their inferred association.
+`co_retrieved` links are created asynchronously by `GraphLinker.buildCoRetrievalLinks()` when a recall result returns 2 or more fragments. Following Hebbian associative learning, fragment pairs frequently retrieved together accumulate higher weights.
 
-### 3.3 The `tool_feedback` Table
+### tool_feedback
 
-Utility assessments submitted via the `tool_feedback` MCP tool.
+Tool usefulness feedback. Records whether recall returned results matching the intent and whether they were sufficient for task completion.
 
-| Column | Type | Semantics |
-|--------|------|-----------|
-| `tool_name` | TEXT | Evaluated tool identifier |
-| `relevant` | BOOLEAN | Whether results were pertinent to the stated intent |
-| `sufficient` | BOOLEAN | Whether results were adequate for task completion |
-| `suggestion` | TEXT | Free-text improvement suggestion |
-| `context` | TEXT | Usage context summary |
-| `session_id` | TEXT | Session identifier |
-| `trigger_type` | TEXT | `sampled` (hook-initiated) / `voluntary` (agent-initiated, default) |
-| `created_at` | TIMESTAMPTZ | |
+| Column | Type | Description |
+|--------|------|-------------|
+| id | BIGSERIAL PK | |
+| tool_name | TEXT | Name of the evaluated tool |
+| relevant | BOOLEAN | Was the result relevant to the request intent |
+| sufficient | BOOLEAN | Was the result sufficient for task completion |
+| suggestion | TEXT | Improvement suggestion (100 characters recommended) |
+| context | TEXT | Usage context summary (50 characters recommended) |
+| session_id | TEXT | Session identifier |
+| trigger_type | TEXT | sampled (hook sampling) / voluntary (AI voluntary call) |
+| created_at | TIMESTAMPTZ | |
 
-### 3.4 The `task_feedback` Table
+### task_feedback
 
-Session-granularity effectiveness assessments, populated by the `reflect` tool's `task_effectiveness` parameter.
+Per-session task effectiveness. Recorded via the reflect tool's task_effectiveness parameter.
 
-| Column | Type | Semantics |
-|--------|------|-----------|
-| `session_id` | TEXT | NOT NULL |
-| `overall_success` | BOOLEAN | NOT NULL |
-| `tool_highlights` | TEXT[] | Tools of exceptional utility, with rationale |
-| `tool_pain_points` | TEXT[] | Tools requiring improvement, with rationale |
-| `created_at` | TIMESTAMPTZ | |
+| Column | Type | Description |
+|--------|------|-------------|
+| id | BIGSERIAL PK | |
+| session_id | TEXT | Session identifier |
+| overall_success | BOOLEAN | Whether the session's primary task completed successfully |
+| tool_highlights | TEXT[] | Especially useful tools and reasons |
+| tool_pain_points | TEXT[] | Tools needing improvement and reasons |
+| created_at | TIMESTAMPTZ | |
 
-### 3.5 The `fragment_versions` Table
+### fragment_versions
 
-Immutable audit log of fragment state prior to each `amend` operation.
+Each time a fragment is modified via the amend tool, the previous version is preserved here. An audit trail of edit history.
 
-| Column | Type | Semantics |
-|--------|------|-----------|
-| `fragment_id` | TEXT | REFERENCES fragments(id) ON DELETE CASCADE |
-| `content` | TEXT | Pre-amendment content |
-| `topic` | TEXT | Pre-amendment topic |
-| `keywords` | TEXT[] | Pre-amendment keywords |
-| `type` | TEXT | Pre-amendment type |
-| `importance` | REAL | Pre-amendment importance |
-| `amended_at` | TIMESTAMPTZ | DEFAULT NOW() |
-| `amended_by` | TEXT | `agent_id` of the amending agent |
+| Column | Type | Description |
+|--------|------|-------------|
+| id | BIGSERIAL PK | |
+| fragment_id | TEXT | Original fragment ID (ON DELETE CASCADE) |
+| content | TEXT | Pre-edit content |
+| topic | TEXT | Pre-edit topic |
+| keywords | TEXT[] | Pre-edit keywords |
+| type | TEXT | Pre-edit type |
+| importance | REAL | Pre-edit importance |
+| amended_at | TIMESTAMPTZ | Edit timestamp |
+| amended_by | TEXT | Editing agent_id |
 
-### 3.6 Row-Level Security
+### Row-Level Security
 
-The `fragments` table has RLS enabled. The isolation policy:
+RLS is enabled on the fragments table. The policy name is `fragment_isolation_policy`. It evaluates the session variable `app.current_agent_id`.
 
 ```sql
 CREATE POLICY fragment_isolation_policy ON agent_memory.fragments
@@ -446,416 +427,296 @@ CREATE POLICY fragment_isolation_policy ON agent_memory.fragments
     );
 ```
 
-Access is granted to: (1) fragments owned by the requesting agent; (2) fragments in the `default` namespace, shared across all agents; (3) sessions identified as `system` or `admin` (maintenance access).
+Access is granted only to fragments matching the agent ID, `default` agent fragments (shared data), and `system`/`admin` sessions (for maintenance). Tool handlers set the context via `SET LOCAL app.current_agent_id = $1` immediately before query execution.
 
-The isolation context is set per-transaction via `SET LOCAL app.current_agent_id = $1` before query execution. In multi-agent deployments requiring strict isolation, pass explicit `agentId` on all `remember` calls and audit the `default`-namespace periodically.
+### API Key-Based Memory Isolation
 
-### 3.7 API Key-Based Memory Isolation
+The `key_id` column provides an additional isolation layer at the API key level. Fragments stored via the master key (`MEMENTO_ACCESS_KEY`) have `key_id = NULL` and are queryable only by the master key. Fragments stored via a DB-issued API key have `key_id = <that key's ID>` and are queryable only by that key.
 
-The `key_id` column provides an additional isolation layer orthogonal to the agent-level RLS policy. Fragments stored via the master key (`MEMENTO_ACCESS_KEY`) carry `key_id = NULL` and are accessible only to master key requests. Fragments stored by a provisioned DB API key carry `key_id = <key UUID>` and are visible only to requests authenticated with that specific key.
+This isolation model implements per-key memory partitioning in multi-agent environments. API keys are managed through the Admin SPA (`/v1/internal/model/nothing`). On creation, the raw key (`mmcp_<slug>_<32 hex>`) is returned in the response exactly once; only the SHA-256 hash is stored in the database.
 
-This model enables per-key memory partitioning in multi-tenant or multi-agent deployments. API keys are provisioned and managed through the Admin SPA at `/v1/internal/model/nothing`. The SPA shell (HTML and images) is served without authentication to allow the login form to render; all data API endpoints under the same prefix require master key authentication via Authorization Bearer header. On successful POST /auth, an HttpOnly session cookie is issued and automatically attached to subsequent requests. The raw key (`mmcp_<slug>_<32 hex chars>`) is returned exactly once on creation and is never stored; the database retains only the SHA-256 hash. Key status, daily rate limits, and usage statistics are tracked in the `api_keys` and `api_key_usage` tables created by migration-003.
+The Admin UI (`/v1/internal/model/nothing`) requires master key authentication. Authenticate via the Authorization Bearer header. A successful POST /auth issues an HttpOnly session cookie that is automatically attached to subsequent requests.
 
-### Admin Console Architecture
+### Admin Console Structure
 
-The Admin UI uses an app shell architecture (`assets/admin/index.html` + `admin.css` + `admin.js`). Seven navigation areas:
+The Admin UI is built as an app shell architecture (`assets/admin/index.html` + `assets/admin/admin.css` + `assets/admin/admin.js`). It is divided into 7 navigation sections:
 
-| Area | Description | Status |
-|------|-------------|--------|
+| Section | Description | Status |
+|---------|-------------|--------|
 | Overview | KPI cards, system health, search layer analysis, recent activity | Implemented |
 | API Keys | Key list/creation/management, status changes, usage tracking | Implemented |
 | Groups | Key group management, member assignment | Implemented |
-| Memory Operations | Fragment search/filter, anomaly detection, search observability | Implemented |
-| Sessions | Session list, detail view, activity tracking, manual reflect, termination, expired cleanup, bulk reflect unreflected | Implemented |
-| Logs | Log file list, content viewer (reverse-read tail), level/search filter, statistics | Implemented |
+| Memory Ops | Fragment search/filter, anomaly detection, search observability | Implemented |
+| Sessions | Session list, detail view, activity tracking, manual reflect, terminate, expired cleanup, bulk unreflected reflect | Implemented |
+| Logs | Log file listing, content viewing (reverse tail), level/search filters, statistics | Implemented |
 | Knowledge Graph | Fragment relationship visualization (D3.js force-directed), topic filter, node detail | Implemented |
 
-For screen layout and usage instructions, see [Admin Console Guide](docs/admin-console-guide.md).
+See [Admin Console Guide](docs/admin-console-guide.md) for screen layouts and operation details for each tab.
 
-The `/stats` endpoint response now includes additional fields: `searchMetrics`, `observability`, `queues`, and `healthFlags`.
+The `/stats` response includes `searchMetrics`, `observability`, `queues`, and `healthFlags` fields in addition to basic statistics.
 
 ### API Key Groups
 
-Keys in the same group share the same fragment isolation scope. Use this when multiple agents (Claude Code, Codex, Gemini, etc.) need to share one project's memory.
+API keys in the same group share an identical fragment isolation scope. Use this when multiple agents (Claude Code, Codex, Gemini, etc.) need to share a single project's memory.
 
-- N:M mapping: one key can belong to multiple groups (`api_key_group_members` table)
-- Isolation resolution: `COALESCE(group_id, api_keys.id)` as effective_key_id at auth time
-- Ungrouped keys: existing behavior preserved (isolated by own key id)
+- N:M mapping: A key can belong to multiple groups (`api_key_group_members` table)
+- Isolation granularity: `COALESCE(group_id, api_keys.id)` is used as the effective_key_id during authentication
+- Keys without a group: Existing behavior preserved (isolated by their own id)
 
 Admin REST endpoints:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `.../groups` | List groups (with key_count) |
+| GET | `.../groups` | Group list (includes key_count) |
 | POST | `.../groups` | Create group (`{ name, description? }`) |
-| DELETE | `.../groups/:id` | Delete group (memberships CASCADE) |
-| GET | `.../groups/:id/members` | List group members |
-| POST | `.../groups/:id/members` | Add key to group (`{ key_id }`) |
-| DELETE | `.../groups/:gid/members/:kid` | Remove key from group |
-| GET | `.../memory/overview` | Memory overview (type/topic distribution, quality pending, superseded, recent activity) |
+| DELETE | `.../groups/:id` | Delete group (membership CASCADE) |
+| GET | `.../groups/:id/members` | List keys in a group |
+| POST | `.../groups/:id/members` | Add a key to a group (`{ key_id }`) |
+| DELETE | `.../groups/:gid/members/:kid` | Remove a key from a group |
+| GET | `.../memory/overview` | Memory overview (type/topic distribution, quality unverified, superseded, recent activity) |
 | GET | `.../memory/search-events?days=N` | Search event analysis (total searches, failed queries, feedback stats) |
-| GET | `.../memory/fragments?topic=&type=&key_id=&page=&limit=` | Search/filter fragments (paginated) |
+| GET | `.../memory/fragments?topic=&type=&key_id=&page=&limit=` | Fragment search/filter (paginated) |
 | GET | `.../memory/anomalies` | Anomaly detection results |
-| GET | `.../sessions` | Session list (with activity enrichment and unreflected count) |
+| GET | `.../sessions` | Session list (activity enrichment, unreflected session count) |
 | GET | `.../sessions/:id` | Session detail (search events, tool feedback) |
 | POST | `.../sessions/:id/reflect` | Manual reflect execution |
 | DELETE | `.../sessions/:id` | Terminate session |
-| POST | `.../sessions/cleanup` | Cleanup expired sessions |
-| POST | `.../sessions/reflect-all` | Bulk reflect unreflected sessions |
-| GET | `.../logs/files` | Log file list with sizes |
-| GET | `.../logs/read?file=&tail=&level=&search=` | Parsed log content (reverse-read tail, level/search filter) |
-| GET | `.../logs/stats` | Log statistics (level counts, recent errors, disk usage) |
-| GET | `.../assets/*` | Static asset serving (admin.css, admin.js). No authentication required. |
+| POST | `.../sessions/cleanup` | Expired session cleanup |
+| POST | `.../sessions/reflect-all` | Bulk reflect for unreflected sessions |
+| GET | `.../logs/files` | Log file list (with sizes) |
+| GET | `.../logs/read?file=&tail=&level=&search=` | Log content viewing (reverse tail, level/search filters) |
+| GET | `.../logs/stats` | Log statistics (per-level counts, recent errors, disk usage) |
+| GET | `.../assets/*` | Admin static files (admin.css, admin.js). No authentication required |
 
 ---
 
-## 4. Prompts: Operational Guidance for AI
+## Prompts
 
-Prompts are pre-defined guidelines that help the AI use the memory system more effectively.
+Pre-defined guidelines that help AI use the memory system efficiently.
 
-| Name | Description | Key Role |
-|------|-------------|----------|
-| `analyze-session` | Analyze session activity | Guide the AI to extract and store valuable decisions, errors, and procedures from the current conversation. |
-| `retrieve-relevant-memory` | Memory retrieval guide | Assist in finding optimal context by combining keyword and semantic search for a specific topic. |
-| `onboarding` | System onboarding | Self-guide for the AI to learn when and how to use Memento MCP tools. |
+| Name | Description | Primary Role |
+|------|-------------|-------------|
+| `analyze-session` | Session activity analysis | Guides automatic extraction of decisions, errors, and procedures worth saving from the current conversation |
+| `retrieve-relevant-memory` | Relevant memory retrieval guide | Assists in finding optimal context by combining keyword and semantic search for a given topic |
+| `onboarding` | System usage guide | Helps AI self-learn when and how to use Memento MCP tools |
 
 ---
 
-## 5. Resources
+## Resources
 
-MCP resources exposing real-time system state.
+MCP resources for real-time queries on the current state of the memory system.
 
 | URI | Description | Data Source |
 |-----|-------------|-------------|
-| `memory://stats` | System Statistics | Counts by type/tier and average utility scores from the `fragments` table. |
-| `memory://topics` | Topic List | List of all unique `topic` labels in the `fragments` table. |
-| `memory://config` | System Configuration | Weights and TTL thresholds defined in `MEMORY_CONFIG`. |
-| `memory://active-session` | Session Activity Log | Tool invocation history for the current session from `SessionActivityTracker` (Redis). |
+| `memory://stats` | System statistics | Per-type and per-tier counts and utility score averages from the `fragments` table |
+| `memory://topics` | Topic list | All unique `topic` labels from the `fragments` table |
+| `memory://config` | System configuration | Weights and TTL thresholds defined in `MEMORY_CONFIG` |
+| `memory://active-session` | Session activity log | Current session tool usage history recorded in `SessionActivityTracker` (Redis) |
 
 ---
 
-## 6. Retrieval Architecture: The Three-Tier Cascade
+## 3-Layer Search
 
-### 6.1 Retrieval Flow Diagram
+The recall tool searches from the least expensive layer first. If an earlier layer yields sufficient results, later layers are skipped.
 
 ![Retrieval Flow](assets/images/retrieval_flow.svg)
 
-Fragment retrieval is query-adaptive: the execution path branches on whether a `text` (semantic) parameter is present, preserving fast cascade behavior for structured queries while applying parallel execution and RRF fusion for semantic queries.
+**L1: Redis Set intersection.** When a fragment is stored, FragmentIndex uses each keyword as a Redis Set key, storing the fragment ID. The Set `keywords:database` contains the IDs of all fragments with "database" as a keyword. Multi-keyword search is a SINTER operation across multiple Sets. Intersection time complexity is O(N*K), where N is the smallest Set's size and K is the keyword count. Since Redis processes this in-memory, it completes within milliseconds. L1 results are merged with L2 results in subsequent stages.
 
-```
-recall(keywords, topic, type, text, ...)
-          │
-          ▼
-┌─────────────────────────────────────────┐
-│  L1: Redis SINTER (always runs first)   │
-│  keys: keywords:<kw> (Set per keyword)  │
-│  op:   SINTER → fragment ID set         │
-│  cost: O(N·K), in-memory, sub-ms        │
-└──────────────┬──────────────────────────┘
-               │
-       ┌───────┴────────────────┐
-       │ text param?            │
-       │ No (structured query)  │ Yes (semantic query)
-       ▼                        ▼
-┌────────────┐        ┌─────────────────────────────┐
-│ L2: PG GIN │        │ L2 ‖ L3  (Promise.all)      │
-│ (sequential│        │ L2: PostgreSQL GIN           │
-│  after L1) │        │ L3: Embed + HNSW cosine      │
-└─────┬──────┘        │ (L2 latency absorbed by L3)  │
-      │               └────────────┬────────────────┘
-      │                            │ RRF Fusion
-      │                            │ w_L1=2.0, k=60
-      └──────────────┬─────────────┘
-                     ▼
-              Merge + Composite Rank
-              → tokenBudget enforcement
-              → includeLinks (1-hop)
-              → return fragments
-```
+**L2: PostgreSQL GIN index.** Always executed after L1. A GIN (Generalized Inverted Index) is on the keywords TEXT[] column. Search uses the `keywords && ARRAY[...]` operator -- an operator that checks for array intersection. The GIN index indexes each array element individually, so this operation is processed as an index scan, not a sequential scan.
 
-### 4.1 L1: Redis Set Intersection
+**L3: pgvector HNSW cosine similarity.** Triggered only when the recall parameters include a `text` field. Insufficient result count alone does not activate L3. The query text is converted to an embedding vector, and `embedding <=> $1` computes cosine distance. All embeddings are L2-normalized unit vectors, so cosine similarity and inner product are equivalent. HNSW indexes quickly find approximate nearest neighbors. The `threshold` parameter sets a similarity floor -- L3 results below this value are excluded. L1/L2-routed results lack a similarity value and are therefore exempt from threshold filtering.
 
-Upon fragment creation, `FragmentIndex` synchronously updates one Redis Set per keyword: each Set keyed `keywords:<keyword>` stores the IDs of all fragments annotated with that keyword. Multi-keyword retrieval reduces to SINTER across the corresponding Sets — time complexity O(N·K) where N is the cardinality of the smallest Set and K is the number of keywords. Execution is sub-millisecond for typical workloads given Redis's in-memory storage model. When Redis is unavailable, L1 is bypassed entirely and retrieval proceeds directly to L2.
+All layer results pass through a `valid_to IS NULL` filter in the final stage -- fragments superseded via superseded_by are excluded from search by default. Passing `includeSuperseded: true` includes expired fragments.
 
-### 4.2 L2: PostgreSQL GIN-Indexed Array Query
+Redis and embedding APIs are optional. Without them, the corresponding layers simply do not operate. PostgreSQL alone provides fully functional L2 search and core features.
 
-L2 always executes after L1, regardless of L1 result count. The `keywords` column carries a Generalized Inverted Index (GIN), enabling the array overlap operator `keywords && ARRAY[...]` to execute as an index scan. GIN indexes decompose each array into constituent elements and maintain posting lists per element; the overlap operator resolves to a set intersection over posting lists, returning rows containing at least one matching keyword. No sequential scan is performed. L1 results are augmented with L2 results rather than L2 being a fallback gated on L1 failure.
+**RRF hybrid merge.** When the `text` parameter is present, L2 and L3 run in parallel via `Promise.all`. Results are merged using Reciprocal Rank Fusion (RRF): `score(f) = sum w/(k + rank + 1)`, default k=60. L1 results are injected with highest priority by multiplying l1WeightFactor (default 2.0). Fragments that exist only in L1 and lack a content field (content not loaded) are excluded from final results. When only keywords/topic/type are used without the `text` parameter, the response contains only L1+L2 results without L3.
 
-### 4.3 L3: pgvector HNSW Cosine Similarity Search
+After the three layers' results are merged via RRF, time-semantic composite ranking is applied. Composite score formula: `score = effectiveImportance * 0.4 + temporalProximity * 0.3 + similarity * 0.3`. effectiveImportance is `importance + computeEmaRankBoost(ema_activation) * 0.5` -- fragments with higher ACT-R EMA activation (frequently recalled) receive additional ranking boost. `computeEmaRankBoost(ema) = 0.2 * (1 - e^{-ema})` with a maximum boost of 0.10. The cap was reduced from 0.3 to 0.2 because: an importance=0.65 fragment's effectiveImportance maxes at 0.65+0.10*0.5=0.70, falling short of the permanent promotion threshold (importance>=0.8) and preventing garbage fragments from cycling upward. temporalProximity is calculated via exponential decay from anchorTime (default: current time) -- `Math.pow(2, -distDays / 30)`. When anchorTime is set to a past moment, fragments closer to that point score higher. The `asOf` parameter is automatically converted to anchorTime and processed through the normal recall path. Final return volume is controlled by the `tokenBudget` parameter. The js-tiktoken cl100k_base encoder precisely calculates tokens per fragment, trimming when the budget is exceeded. Default token budget is 1000. Results can be paginated with `pageSize` and `cursor` parameters.
 
-L3 is invoked exclusively when the `text` parameter is present and an embedding API key is configured. Insufficient L1/L2 result count alone does not trigger L3. The query text is encoded via the OpenAI Embeddings API (`text-embedding-3-small`, 1536 dimensions) and the resulting dense vector is issued against the HNSW index:
-
-```sql
-SELECT *, 1 - (embedding <=> $1) AS similarity
-FROM agent_memory.fragments
-WHERE embedding IS NOT NULL
-ORDER BY embedding <=> $1
-LIMIT $2
-```
-
-The `threshold` parameter filters results where computed cosine similarity falls below the stated minimum. L1/L2 results, which carry no similarity score, are exempt from threshold filtering.
-
-When `OPENAI_API_KEY` is absent or the embedding API call fails, L3 is unavailable. Fragments stored without embeddings are silently excluded from L3 results; they remain accessible via L1 and L2.
-
-### 4.4 Result Merging: RRF Hybrid Fusion and Composite Ranking
-
-When the `text` parameter is present, L2 and L3 execute in parallel via `Promise.all` and their results are fused using Reciprocal Rank Fusion (RRF):
-
-```
-rrfScore(f) = Σ_tier weight(tier) / (k + rank_tier(f) + 1)
-```
-
-where `k = 60` (MEMORY_CONFIG.rrfSearch.k) is the denominator stabilization constant and L1 results receive a `l1WeightFactor = 2.0` multiplier over L2/L3 to prioritize exact keyword matches. Fragments appearing only in the L1 tier without content fields (not returned by L2 or L3 queries) are filtered out before the final result set is assembled. The `_rrfScore` internal field is stripped before returning results to MCP clients.
-
-When `text` is absent (structured query using keywords/topic/type only), L3 is not invoked. The response is assembled from L1 and L2 results only, preserving the low-latency path.
-
-After RRF fusion, composite ranking is applied:
-
-```
-effectiveImportance(f) = min(1.0, importance(f) + computeEmaRankBoost(ema_activation(f)) × 0.5)
-rank(f) = importanceWeight × effectiveImportance(f) + recencyWeight × recency_score(f) + semanticWeight × similarity(f)
-```
-
-`computeEmaRankBoost(ema) = 0.3 × (1 − e^{−ema})` — maximum additional boost of 0.15 for the most frequently retrieved fragments. `importanceWeight = 0.4`, `recencyWeight = 0.3`, `semanticWeight = 0.3` by default. Adjust via `MEMORY_CONFIG.ranking`.
-
-Token budget enforcement follows ranking: fragments are accumulated in rank order and the sequence is truncated when cumulative `estimated_tokens` exceeds `tokenBudget` (default: 1000). Token counts are computed using `js-tiktoken` with the `cl100k_base` encoding via `encodingForModel("gpt-4")`; when the encoder is unavailable at runtime, a `chars / 4` approximation is applied as fallback.
-
-### 4.5 Linked Fragment Retrieval
-
-When `includeLinks = true` (default), the result set is augmented with one-hop neighbors from `fragment_links`. The `linkRelationType` parameter constrains which edge types are followed; when unspecified, `caused_by`, `resolved_by`, and `related` edges are included. The total number of appended linked fragments is bounded by `MEMORY_CONFIG.linkedFragmentLimit` (default: 10).
-
-### 4.6 Performance Characteristics
-
-Estimated latencies based on underlying data structure properties. Actual production latencies vary with hardware, network, index parameters, and store cardinality.
-
-| Tier / Operation | Time Complexity | Expected Latency | Dominant Cost |
-|-----------------|-----------------|-----------------|---------------|
-| L1 Redis SINTER | O(N·K) | < 1 ms | Network RTT to Redis; N = smallest Set cardinality, K = keyword count |
-| L2 PostgreSQL GIN | O(N) per posting list | 1–10 ms | GIN posting list intersection; no sequential scan |
-| L3 pgvector HNSW query | O(log n) | 1–5 ms | HNSW graph traversal; n = embedded fragment count |
-| L3 embedding generation | network-bound | 50–200 ms | OpenAI Embeddings API round-trip |
-| Full cascade (L1 → L3, cached embedding) | — | 5–20 ms | Merge + composite ranking: O(m log m), m = merged result count |
-| Full cascade (live embedding) | — | 60–220 ms | Dominated by OpenAI API call |
-| MemoryEvaluator job | process-bound | 200–2000 ms | Gemini CLI subprocess; fully asynchronous, non-blocking |
-| NLI inference (warm) | O(n) | 50–200 ms | mDeBERTa ONNX CPU; n = token count of input pair |
-| Consolidation pipeline (< 10⁴ fragments) | O(n) most stages | < 1 s excl. API calls | Stage 9 embedding backfill bounded by OpenAI call count |
-
-Three further observations merit attention. First, the HNSW index parameters (m=16, ef_construction=64) represent a conservative default; increasing `ef_construction` at build time improves recall at the cost of index size and construction latency. The query-time recall parameter `ef` can be tuned per-request via pgvector's `SET hnsw.ef_search`. Second, composite ranking (§4.4) is activated only when the fragment store exceeds `MEMORY_CONFIG.ranking.activationThreshold` (default: 100); below this threshold, results are returned in creation-descending order, eliminating the sort cost entirely. Third, the token budget enforcement loop is O(k) in the number of returned fragments k, not in total store cardinality n, and contributes negligible latency at typical retrieval set sizes.
+When `includeLinks: true` (default) is set on recall, linked fragments are fetched via a 1-hop traversal. The `linkRelationType` parameter filters for specific relation types -- when unspecified, caused_by, resolved_by, and related are included. The linked fragment fetch limit is `MEMORY_CONFIG.linkedFragmentLimit` (default 10).
 
 ---
 
-## 5. Fragment Lifecycle: TTL Model and Scope Semantics
+## TTL Tiers
 
-### 5.1 Lifecycle State Transition Diagram
+Fragments move across four tiers -- hot, warm, cold, permanent -- based on access frequency. MemoryConsolidator periodically handles demotion/promotion. Re-accessed fragments are restored to hot.
 
 ![Fragment Lifecycle](assets/images/fragment_lifecycle.svg)
 
-### 5.2 Scope vs. TTL Tier: A Critical Distinction
+| Tier | Description |
+|------|-------------|
+| hot | Recently created or frequently accessed fragments |
+| warm | Default tier. Most long-term memories reside here |
+| cold | Fragments not accessed for a long time. Candidates for deletion in the next maintenance cycle |
+| permanent | Exempt from decay, TTL demotion, and expiration deletion |
 
-The `scope` parameter of the `remember` tool and the `ttl_tier` column of `fragments` are orthogonal concepts that share superficially similar vocabulary. Their distinction must be understood clearly to avoid operational errors.
+Fragments stored with `scope: "session"` serve as session working memory. They are discarded when the session ends. `scope: "permanent"` is the default.
 
-**`scope`** governs *where* a fragment is stored:
-- `scope: "permanent"` (default): the fragment is written to the main `fragments` table and persists indefinitely, subject to normal lifecycle management.
-- `scope: "session"`: the fragment is written to the working memory partition and is expunged when the session terminates.
+Fragments marked `isAnchor: true` are permanently excluded from MemoryConsolidator's decay and deletion regardless of their tier. Even with importance as low as 0.1, they will not be deleted. Use this for knowledge that must never be lost.
 
-**`ttl_tier`** governs *how* the `MemoryConsolidator` treats a fragment over time. The initial tier assignment is computed by `FragmentFactory._inferTTL` based on `type` and `importance` at creation time — independently of `scope`:
-
-| Condition (evaluated in order) | Assigned `ttl_tier` |
-|--------------------------------|---------------------|
-| `type === "preference"` | `permanent` |
-| `importance >= 0.8` | `permanent` |
-| `type === "error"` OR `type === "procedure"` | `hot` |
-| `importance >= 0.5` | `warm` |
-| otherwise | `cold` |
-
-Consequently, `scope: "permanent"` does not imply `ttl_tier: "permanent"`. A `fact` fragment with `importance: 0.6` stored with `scope: "permanent"` receives `ttl_tier: "warm"` and is subject to eventual demotion to `cold` and expiration. A `preference` fragment receives `ttl_tier: "permanent"` regardless of the explicitly supplied `importance` value, and will never be expired by the consolidation pipeline.
-
-The `is_anchor` flag provides an orthogonal mechanism for operator-forced permanence: any fragment with `is_anchor = true` is unconditionally exempt from all lifecycle management operations regardless of its `ttl_tier` value.
-
-### 5.2 TTL Tier Semantics
-
-| Tier | Semantics |
-|------|-----------|
-| `hot` | Recently created or frequently accessed; protected from demotion for a short window |
-| `warm` | Default long-term tier; subject to gradual importance decay and eventual cold demotion |
-| `cold` | Low-activity; subject to expiration after type-specific stale thresholds |
-| `permanent` | Exempt from all consolidation operations |
-
-Stale detection thresholds (days without access before cold-tier expiration): `procedure`=30, `fact`=60, `decision`=90, all other types=60. Configurable via `MEMORY_CONFIG.staleThresholds`.
+Stale thresholds (days): procedure=30, fact=60, decision=90, default=60. Adjust in `config/memory.js` under `MEMORY_CONFIG.staleThresholds`.
 
 ---
 
-## 6. MCP Tool Interface
+## MCP Tools
 
-Twelve tools are registered. All are defined in `lib/tools/memory.js` and registered via `lib/tool-registry.js`. No database-layer tools are exposed through the MCP interface.
+Defined in `lib/tools/memory.js` and registered via `lib/tool-registry.js`. DB direct-access tools such as db_query, db_tables, and db_schema are used only as internal utilities and are not exposed to MCP clients.
 
-### 6.1 Tool Interaction Patterns
+---
 
-The twelve tools form three functional clusters:
+### remember
 
-**Storage cluster:** `remember` persists new knowledge; `amend` modifies existing fragments in place with version archival; `link` establishes typed edges between fragments; `forget` removes fragments.
-
-**Retrieval cluster:** `recall` executes the three-tier cascade; `context` loads session-initialization memory; `graph_explore` traverses causal chains from an error fragment.
-
-**Maintenance and telemetry cluster:** `reflect` converts a session summary to a fragment set at session close (also triggered automatically on session termination via `AutoReflect`); `tool_feedback` records instrument-level utility assessments; `memory_stats` returns aggregate store statistics; `memory_consolidate` triggers the eighteen-step maintenance pipeline.
-
-A canonical session workflow:
-
-```
-session open    → context(agentId, tokenBudget)
-                  [loads preference + error + procedure fragments]
-                  [hints about unreflected prior sessions, if any]
-
-during session  → recall(keywords/text)
-                  remember(content, topic, type)
-                    └─ auto-link: pgvector similarity scan creates
-                       related / resolved_by / superseded_by edges
-                  link(fromId, toId, relationType)
-                  amend(id, ...) as knowledge evolves
-                  tool_feedback(tool_name, relevant, sufficient)
-
-session close   → reflect(summary, decisions, errors_resolved, ...)
-                  [converts summary to typed fragments for next session]
-                  (or) AutoReflect triggers if agent does not call reflect
-                    └─ Gemini CLI summary, or minimal fallback
-```
-
-### 6.2 `remember`
-
-Persists a typed knowledge fragment. `FragmentFactory._redactPII` is applied to `content` before storage, masking four categories via regex:
-
-1. **API keys**: patterns matching `sk-[a-zA-Z0-9]{32,}` (OpenAI) and `AIza[0-9A-Za-z\-_]{35}` (Google) → `[REDACTED_API_KEY]`
-2. **Email addresses**: RFC 5321 local-part + domain pattern → `[REDACTED_EMAIL]`
-3. **Password fields**: `password|passwd|pwd|비밀번호|비번` followed by `:` or `=` and a value → `[REDACTED_PWD]`
-4. **Korean mobile numbers**: `01[016789][-\s]?\d{3,4}[-\s]?\d{4}` → `[REDACTED_PHONE]`
-
-Masking is purely destructive; the original content is never stored and cannot be recovered. The `content_hash` is computed from the *redacted, truncated* content, so duplicate detection operates on the masked representation. PII masking applies to the `content` field only; `topic`, `keywords`, and `source` are not processed.
-
-Keyword extraction, when `keywords` is omitted, applies a term-frequency ranking over unigrams after removing a bilingual (Korean/English) stopword list, returning up to five terms with highest frequency.
+Stores knowledge as a fragment. Atomic units of 1-3 sentences are ideal. If the content already exists (by content_hash), duplicate storage is rejected. FragmentFactory masks PII before storage.
 
 | Parameter | Type | Required | Description |
 |-----------|------|:--------:|-------------|
-| `content` | string | Y | Fragment content. ≤300 characters; truncated with ellipsis on overflow. PII masking applied. |
-| `topic` | string | Y | Categorical topic label |
-| `type` | string | Y | `fact` / `decision` / `error` / `preference` / `procedure` / `relation` |
-| `keywords` | string[] | | Search keywords. Auto-extracted via TF ranking when omitted |
-| `importance` | number | | [0.0, 1.0]. Type-specific default when omitted. See §3.1 for defaults. |
-| `source` | string | | Provenance identifier |
-| `linkedTo` | string[] | | Fragment IDs to link at creation time |
-| `scope` | string | | `permanent` (default) / `session`. Controls storage layer, not TTL tier. |
-| `isAnchor` | boolean | | Exempts from decay, TTL demotion, and expiration when `true` |
-| `agentId` | string | | Agent identifier for RLS context. Defaults to `"default"` namespace when omitted. |
+| content | string | Y | Content to remember. 300 characters recommended |
+| topic | string | Y | Topic label (e.g., database, deployment, error-handling) |
+| type | string | Y | fact / decision / error / preference / procedure / relation |
+| keywords | string[] | | Search keywords. Auto-extracted from content if omitted |
+| importance | number | | Importance 0.0~1.0. Type-specific defaults applied when omitted. Per-type caps applied at storage: error/procedure 0.6, fact/decision/relation 0.7, preference 0.9. is_anchor=true fragments have no cap. Content under 20 chars capped at 0.2 |
+| source | string | | Source identifier (session ID, tool name, file path, etc.) |
+| linkedTo | string[] | | Existing fragment IDs to link immediately on storage |
+| scope | string | | permanent (default) / session |
+| isAnchor | boolean | | When true, exempt from decay and expiration deletion |
+| supersedes | string[] | | Existing fragment IDs to supersede. Creates superseded_by links, sets valid_to, and halves importance on the specified fragments |
+| agentId | string | | Agent ID. Used for RLS isolation context |
 
-Returns: `{ success: true, id: string, created: boolean }`. `created: false` indicates the content hash already existed; the existing fragment is returned.
+Return value: `{ success: true, id: "...", created: true/false }`. When created is false, an existing fragment was returned (duplicate).
 
-**Auto-linking behavior:** After successful insertion, `MemoryManager._autoLinkOnRemember` queries pgvector directly for fragments in the same topic with cosine similarity > 0.7. Up to three edges are created automatically: `related` (similarity > 0.7), `resolved_by` (new error fragment resolving a prior error), or `superseded_by` (same type, similarity > 0.85, newer timestamp). This operates only when embeddings are present; fragments without embeddings are skipped. The auto-link step is non-blocking: failures do not affect the `remember` response.
+Immediately after storage, ConflictResolver's `autoLinkOnRemember` synchronously creates `related` links with fragments sharing the same topic. Then EmbeddingWorker generates embeddings asynchronously, and upon completion GraphLinker creates additional links to similar fragments in the same topic (similarity > 0.7) based on semantic similarity. Link types are determined by rules: same type + high similarity (> 0.85) yields `superseded_by`, error-type resolution relationships yield `resolved_by`, and everything else yields `related`. Up to 3 auto-links are created. Embedding generation and GraphLinker linking are decoupled from the remember response, so they do not affect response time.
 
-### 6.3 `recall`
+---
 
-Executes the three-tier retrieval cascade. Parameters may be combined freely.
+### recall
+
+Searches stored fragments. Keywords, topic, type, and natural language queries can be used individually or in combination.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `keywords` | string[] | L1 Redis Set intersection keys; also applied as L2 filter |
-| `topic` | string | Topic filter applied at all tiers |
-| `type` | string | Type filter applied at all tiers |
-| `text` | string | Natural language query; forces L3 semantic retrieval and enables parallel L2+L3 execution with RRF merge |
-| `tokenBudget` | number | Maximum cumulative token count. Default: 1000 |
-| `includeLinks` | boolean | Append 1-hop linked neighbors. Default: `true` |
-| `linkRelationType` | string | Edge type filter for linked neighbors. Default: `caused_by`, `resolved_by`, `related` |
-| `threshold` | number | Minimum cosine similarity for L3 results [0.0, 1.0]. L1/L2 results are unaffected. |
-| `asOf` | string | ISO 8601 datetime (e.g., `"2026-01-15T00:00:00Z"`). Enables point-in-time retrieval: returns only fragments where `valid_from ≤ asOf AND (valid_to IS NULL OR valid_to > asOf)`. Useful for auditing knowledge state at a specific historical moment. |
-| `excludeSeen` | boolean | When `true` (default), excludes fragments already injected by the most recent `context()` call in the same session. Prevents duplicate injection. |
-| `agentId` | string | Agent identifier |
+| keywords | string[] | Keywords for L1 Redis Set intersection search |
+| topic | string | Restrict results to a specific topic |
+| type | string | Restrict results to a specific type |
+| text | string | Natural language query. Forces L3 vector search activation and L2+L3 parallel execution with RRF merge |
+| tokenBudget | number | Maximum return tokens. Default 1000. cl100k_base based |
+| includeLinks | boolean | Include 1-hop linked fragments. Default true |
+| linkRelationType | string | caused_by / resolved_by / related / part_of / contradicts |
+| threshold | number | L3 cosine similarity floor (0.0~1.0). Vector search results below this value are excluded |
+| asOf | string | ISO 8601 datetime (e.g., "2026-01-15T00:00:00Z"). Converted to anchorTime so fragments closer to that point are prioritized |
+| includeSuperseded | boolean | When true, include fragments with valid_to set (expired). Default false -- superseded fragments are excluded by default |
+| excludeSeen | boolean | When true (default), exclude fragments already injected in the same session's preceding context() call. Prevents duplicate injection |
+| cursor | string | Pagination cursor. Pass the previous result's nextCursor value for the next page |
+| pageSize | number | Page size. Default 20, max 50 |
+| agentId | string | Agent ID |
 
-### 6.4 `forget`
+---
 
-Deletes fragments by ID or by topic. `permanent`-tier fragments require `force: true`.
+### forget
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `id` | string | Delete a specific fragment by ID |
-| `topic` | string | Delete all fragments with the specified topic |
-| `force` | boolean | Permit deletion of `permanent`-tier fragments. Default: `false` |
-| `agentId` | string | Agent identifier |
-
-### 6.5 `link`
-
-Creates a typed directed edge. Inserts a row into `fragment_links` and appends `toId` to `from_id.linked_to`.
-
-| Parameter | Type | Required | Description |
-|-----------|------|:--------:|-------------|
-| `fromId` | string | Y | Source fragment ID |
-| `toId` | string | Y | Target fragment ID |
-| `relationType` | string | | `related` / `caused_by` / `resolved_by` / `part_of` / `contradicts`. Default: `related` |
-| `agentId` | string | | Agent identifier |
-
-### 6.6 `amend`
-
-Modifies a fragment in place. Pre-modification state is archived to `fragment_versions`. Fragment ID and all edge relations are preserved.
-
-| Parameter | Type | Required | Description |
-|-----------|------|:--------:|-------------|
-| `id` | string | Y | Target fragment ID |
-| `content` | string | | Replacement content. PII masking applied. Truncated at 300 characters. |
-| `topic` | string | | Replacement topic |
-| `keywords` | string[] | | Replacement keyword list |
-| `type` | string | | Replacement type |
-| `importance` | number | | Replacement importance [0.0, 1.0] |
-| `isAnchor` | boolean | | Modify anchor status |
-| `supersedes` | boolean | | Creates `superseded_by` edge from this fragment to the original; reduces original's importance |
-| `agentId` | string | | Agent identifier |
-
-### 6.7 `reflect`
-
-Converts a session summary into a structured fragment set at session termination. Each non-null list parameter generates typed fragments: `decisions` → `decision`; `errors_resolved` → `error`; `new_procedures` → `procedure`; `open_questions` → `fact`. The `summary` string is always persisted as a `fact` fragment.
-
-**Session consolidation:** When `sessionId` is provided, fragments indexed for that session (Redis `frag:sess:{sessionId}` and Working Memory) are consolidated and used to populate missing parameters. Callable with `sessionId` alone; `summary` is optional in that case.
-
-**Automatic reflection:** When a session terminates (explicit close, expiration, or server shutdown) without the agent having called `reflect`, the `AutoReflect` module triggers automatically. If Gemini CLI is available, it generates a structured summary from `SessionActivityTracker` logs (tools called, keywords searched, fragments created/accessed) and invokes `reflect` with the synthesized parameters. If Gemini CLI is unavailable, a minimal `fact` fragment summarizing the session is created, and the session is marked as "unreflected" for potential future AI-driven reflection. The `context` tool detects unreflected sessions and injects a hint into the AI's prompt.
-
-| Parameter | Type | Required | Description |
-|-----------|------|:--------:|-------------|
-| `summary` | string | | Free-text session summary. Auto-generated from session fragments when `sessionId` is provided |
-| `sessionId` | string | | Session identifier. When provided, only fragments from this session are consolidated |
-| `decisions` | string[] | | Architectural/technical decisions reached this session |
-| `errors_resolved` | string[] | | Errors resolved this session with resolution description |
-| `new_procedures` | string[] | | New procedures or workflows established this session |
-| `open_questions` | string[] | | Unresolved questions or deferred work items |
-| `agentId` | string | | Agent identifier |
-| `task_effectiveness` | object | | `{ overall_success: boolean, tool_highlights: string[], tool_pain_points: string[] }`. Persisted to `task_feedback`. |
-
-### 6.8 `context`
-
-Loads memory context at session initialization. Returns Core Memory (high-importance fragments, prefix-injected) and, when `sessionId` is specified, Working Memory (session-scoped fragments appended during the current session). Additionally queries `SessionActivityTracker` for unreflected prior sessions and, when found, injects a hint into the returned context prompting the AI to call `reflect` for those sessions.
+Deletes fragments. Permanent-tier fragments cannot be deleted without the force option.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `tokenBudget` | number | Maximum token count for loaded context. Default: 2000 |
-| `types` | string[] | Fragment types to include. Default: `["preference", "error", "procedure"]` |
-| `sessionId` | string | Session identifier for Working Memory retrieval |
-| `agentId` | string | Agent identifier |
+| id | string | Delete a single fragment by ID |
+| topic | string | Delete all fragments for a specific topic |
+| force | boolean | Allow forced deletion of permanent fragments. Default false |
+| agentId | string | Agent ID |
 
-### 6.9 `tool_feedback`
+Either id or topic must be provided. If both are present, id takes precedence. Topic-based deletion uses the L2 (PostgreSQL) path to bulk-delete fragments for that topic.
 
-Records a utility assessment for a previously executed tool invocation.
+---
+
+### link
+
+Creates an explicit relationship between two fragments. Recorded in the fragment_links table and the linked_to array is also updated.
 
 | Parameter | Type | Required | Description |
 |-----------|------|:--------:|-------------|
-| `tool_name` | string | Y | Identifier of the evaluated tool |
-| `relevant` | boolean | Y | Whether results were pertinent to the stated intent |
-| `sufficient` | boolean | Y | Whether results were adequate for task completion |
-| `fragment_ids` | string[] | | Pass recall result fragment IDs to adjust their activation scores (relevant=true: +0.1, false: -0.15) |
-| `suggestion` | string | | Improvement suggestion. ≤100 characters recommended |
-| `context` | string | | Usage context summary. ≤50 characters recommended |
-| `session_id` | string | | Session identifier |
-| `trigger_type` | string | | `sampled` (hook-initiated) / `voluntary` (agent-initiated, default) |
+| fromId | string | Y | Source fragment ID |
+| toId | string | Y | Target fragment ID |
+| relationType | string | | related / caused_by / resolved_by / part_of / contradicts. Default related |
+| agentId | string | | Agent ID |
 
-### 6.10 `memory_stats`
+Setting a `resolved_by` link between an error fragment and a resolution procedure fragment enables graph_explore to trace the causal chain.
 
-Returns aggregate statistics: total fragment count, TTL tier distribution, type-wise counts, embedding coverage ratio, mean utility scores. No parameters.
+---
 
-Response includes a `searchLatencyMs` key with rolling P50/P90/P99 latencies (ms) per retrieval layer, sampled over the last 100 searches:
+### amend
+
+Modifies the content or metadata of an existing fragment. The pre-edit state is preserved in fragment_versions. The ID and fragment_links are retained.
+
+| Parameter | Type | Required | Description |
+|-----------|------|:--------:|-------------|
+| id | string | Y | Target fragment ID |
+| content | string | | New content. Truncated if over 300 characters |
+| topic | string | | New topic |
+| keywords | string[] | | New keyword list |
+| type | string | | New type |
+| importance | number | | New importance 0.0~1.0 |
+| isAnchor | boolean | | Change anchor status |
+| supersedes | boolean | | When true, explicitly marks this fragment as superseding the previous one. Creates superseded_by link and reduces the previous fragment's importance |
+| agentId | string | | Agent ID |
+
+---
+
+### reflect
+
+Converts an entire session into structured fragments for persistence at session end. Saves key decisions, error resolutions, new procedures, and open questions as separate fragments. A summary alone works, but providing decisions/errors_resolved/new_procedures/open_questions stores each as individual fragments of their respective types (decision/error/procedure/fact).
+
+When sessionId is provided, only existing fragments from that session (Redis frag:sess, Working Memory) are consolidated and unprovided fields are auto-populated. Can be called with just sessionId and no summary.
+
+Beyond manual invocation, AutoReflect runs automatically on session end/expiration/server shutdown. If Gemini CLI is available, it generates a structured summary from SessionActivityTracker's activity log; otherwise, it produces a minimal fact fragment based on metadata (duration, tool usage stats, fragment count). Sessions where AI manually called reflect skip auto-reflect.
+
+| Parameter | Type | Required | Description |
+|-----------|------|:--------:|-------------|
+| summary | string | | Overall session summary. Auto-generated from session fragments if only sessionId is provided |
+| sessionId | string | | Session ID. When provided, consolidates only fragments from that session |
+| decisions | string[] | | Technical/architectural decisions finalized in this session |
+| errors_resolved | string[] | | Resolved errors. "Error description + resolution" format recommended |
+| new_procedures | string[] | | New procedures/workflows established in this session |
+| open_questions | string[] | | Unresolved questions or follow-up tasks |
+| agentId | string | | Agent ID |
+| task_effectiveness | object | | Session tool usage effectiveness summary. `{ overall_success: boolean, tool_highlights: string[], tool_pain_points: string[] }` |
+
+---
+
+### context
+
+Restores memory system context at session start. Loads Core Memory (high-importance anchor fragments) and Working Memory (current session fragments) separately. Core Memory has triple controls: fragment count cap (default 15), per-type slot limits (preference:5, error:5, procedure:5, decision:3, fact:3) -- even within the token budget, no single type can dominate. Working Memory also has a fragment count cap (default 10). When unreflected sessions exist, injectionText includes a `[SYSTEM HINT]` with the session count.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| tokenBudget | number | Maximum return tokens. Default 2000 |
+| types | string[] | Types to load. Default: ["preference", "error", "procedure"] |
+| sessionId | string | Session ID for working memory lookup |
+| agentId | string | Agent ID |
+
+---
+
+### tool_feedback
+
+Evaluates the usefulness of tool results. Call when recall or other tool results deviate significantly from expectations. Feedback is recorded in the tool_feedback table and used for long-term search quality improvement.
+
+| Parameter | Type | Required | Description |
+|-----------|------|:--------:|-------------|
+| tool_name | string | Y | Name of the evaluated tool |
+| relevant | boolean | Y | Was the result relevant to the request intent |
+| sufficient | boolean | Y | Was the result sufficient for task completion |
+| fragment_ids | string[] | | Passing recall result fragment IDs adjusts their activation scores based on feedback (relevant=true: +0.1, false: -0.15) |
+| suggestion | string | | Improvement suggestion. 100 characters recommended |
+| context | string | | Usage context summary. 50 characters recommended |
+| session_id | string | | Session ID |
+| trigger_type | string | | sampled (hook-sampled request) / voluntary (AI voluntary call, default) |
+
+---
+
+### memory_stats
+
+Queries the current state of the memory system. Total fragment count, TTL tier distribution, per-type statistics, embedding generation ratio, etc. No parameters.
+
+The response includes a `searchLatencyMs` key. Returns P50/P90/P99 latencies (ms) from the last 100 searches per L1 (Redis) / L2 (PostgreSQL) / L3 (pgvector) / total layer.
 
 ```json
 "searchLatencyMs": {
@@ -866,208 +727,139 @@ Response includes a `searchLatencyMs` key with rolling P50/P90/P99 latencies (ms
 }
 ```
 
-Response also includes an `evaluation` key — implicit IR quality metrics derived from `tool_feedback` and `task_feedback` signals, requiring no labeled dataset:
+The response also includes an `evaluation` key. IR quality metrics using `tool_feedback`/`task_feedback` as implicit ground truth.
 
 | Field | Description |
 |-------|-------------|
-| `rolling_precision_at_5` | Rolling Precision@5 over the last 100 sessions. Approximated by `relevant=true` ratio in `tool_feedback`. |
-| `sufficient_rate` | Ratio of `sufficient=true` feedback events (0–1) |
-| `sample_sessions` | Number of sessions used in the Precision@5 estimate |
-| `task_success_rate` | `task_feedback.overall_success` ratio over a 30-day window |
-| `task_sessions` | Number of task sessions used in the success rate estimate |
-
-### 6.11 `memory_consolidate`
-
-Triggers the eighteen-step consolidation pipeline synchronously. Returns per-stage processing counts including NLI statistics (`nliResolvedDirectly`, `nliSkippedAsNonContra`). No parameters. See §8.
-
-### 6.12 `graph_explore`
-
-Performs a one-hop traversal of the causal relation subgraph from a specified origin fragment, following `caused_by` and `resolved_by` edges. Intended for root cause analysis starting from an `error` fragment.
-
-| Parameter | Type | Required | Description |
-|-----------|------|:--------:|-------------|
-| `startId` | string | Y | Origin fragment ID. `error`-typed fragments are the canonical input. |
-| `agentId` | string | | Agent identifier |
-
-### 6.13 `fragment_history`
-
-Returns the full change history for a fragment: all prior versions created by `amend` and the `superseded_by` chain.
-
-| Parameter | Type | Required | Description |
-|-----------|------|:--------:|-------------|
-| `id` | string | Y | Fragment ID to query history for |
+| `rolling_precision_at_5` | Recall Precision@5 rolling average over the last 100 sessions. Approximated by `relevant=true` ratio |
+| `sufficient_rate` | `sufficient=true` ratio (0~1) |
+| `sample_sessions` | Number of sessions used for evaluation |
+| `task_success_rate` | `task_feedback.overall_success` ratio (30-day window) |
+| `task_sessions` | Number of task sessions used for evaluation |
 
 ---
 
-## 7. Asynchronous Quality Evaluation: MemoryEvaluator
+### memory_consolidate
 
-`MemoryEvaluator` is a singleton background worker started at server startup via `getMemoryEvaluator().start()` and halted during graceful shutdown. It implements a polling loop over the Redis queue `memory_evaluation` at a fixed interval of 5,000 ms.
-
-```
-server start
-    │
-    └─► MemoryEvaluator.start()
-              │
-              └─► _loop()
-                    ├── popFromQueue("memory_evaluation")
-                    │       │ job present
-                    │       └──► evaluate(job)
-                    │               ├── Gemini CLI call (geminiCLIJson)
-                    │               └── UPDATE fragments SET utility_score, verified_at
-                    │       │ queue empty
-                    │       └──► sleep(5000ms)
-                    └── (repeat)
-```
-
-When a fragment is persisted via `remember`, its identifier is enqueued for evaluation. The evaluation path is fully decoupled from the `remember` call to eliminate latency from the synchronous response path. `MemoryEvaluator` assesses informational value, specificity, and actionability of the stored content and updates `utility_score` and `verified_at` accordingly.
-
-The evaluator uses the Gemini CLI (`geminiCLIJson`) rather than the Gemini REST API. If the CLI is not installed (`isGeminiCLIAvailable()` returns `false`), evaluation is skipped entirely — the fragment retains its default `utility_score` of 1.0, and no error is surfaced. When the CLI call fails (timeout, malformed response), the job is processed without updating the fragment and the worker continues. The queue is not retried automatically on transient failures in the current implementation; operators requiring retry semantics should instrument the Redis queue externally.
+Manually triggers the 18-step maintenance pipeline. It runs automatically every 6 hours via the internal scheduler, but manual invocation is also possible. No parameters.
 
 ---
 
-## 8. Consolidation Pipeline: MemoryConsolidator
+### graph_explore
 
-The consolidation pipeline is an eighteen-step sequential maintenance procedure (11 main stages + 7 sub-steps).
+Traces causal relationship chains starting from an error fragment. A dedicated RCA (Root Cause Analysis) tool. Traverses caused_by and resolved_by relations 1-hop to return a connected graph linking error causes and resolution procedures.
 
-```
-memory_consolidate
-        │
-        ├── Stage 1:  TTL tier transitions (hot→warm→cold, anchors exempt)
-        ├── Stage 2:  importance decay (PostgreSQL POWER() batch SQL, type-specific half-lives, idempotent via last_decay_at, anchors exempt)
-        ├── Stage 3:  expired fragment deletion (stale thresholds)
-        ├── Stage 4:  deduplication (content_hash collision → merge, retain highest-importance)
-        ├── Stage 5:  missing embedding backfill (up to 5 per cycle)
-        ├── Stage 6:  utility_score recomputation: importance × (1 + ln(max(access_count, 1)))
-        ├── Stage 6.5: anchor auto-promotion (access_count ≥ 10 + importance ≥ 0.8)
-        ├── Stage 7:  contradiction detection ──── 3-stage hybrid ────
-        │                 ├─ 7a: pgvector cosine similarity > 0.85 (candidate filter)
-        │                 ├─ 7b: NLI classification (mDeBERTa ONNX, CPU)
-        │                 │       ├─ contradiction ≥ 0.8 → resolve immediately
-        │                 │       ├─ entailment ≥ 0.6 → skip (not contradictory)
-        │                 │       └─ uncertain → escalate to Stage 7c
-        │                 └─ 7c: Gemini CLI adjudication (domain/numerical contradictions)
-        │                         └─ CLI unavailable → queue to Redis pending list
-        ├── Stage 7.5: pending contradiction reprocessing (Redis queue, max 10 per cycle)
-        ├── Stage 8:  feedback report generation (tool_feedback/task_feedback aggregation)
-        ├── Stage 8.5: feedback-adaptive importance calibration (_calibrateByFeedback)
-        │               Joins tool_feedback sessions with SessionActivityTracker co-recall history.
-        │               sufficient=true → +5%; sufficient=false, relevant=true → −2.5%; relevant=false → −5%.
-        │               Learning rate 0.05, clipped to [0.05, 1.0]. is_anchor=true exempt.
-        ├── Stage 9:  Redis index pruning + stale fragment collection
-        └── Stage 10: aggregate statistics (per-stage counts → return value)
-```
+| Parameter | Type | Required | Description |
+|-----------|------|:--------:|-------------|
+| startId | string | Y | Starting fragment ID. Error-type fragments recommended |
+| agentId | string | | Agent ID |
 
-**Stage 4 — Deduplication detail:** When multiple fragments share a `content_hash`, the highest-importance fragment is designated the surviving record. All `fragment_links` referencing duplicate fragment IDs are updated to reference the surviving ID before the duplicates are deleted.
+---
 
-**Stage 7 — Contradiction detection detail (3-stage hybrid):**
+### fragment_history
 
-The contradiction detection pipeline processes only fragments created since the last check (tracked via Redis key `frag:contradiction_check_at`). For each new fragment, candidates are retrieved from the same topic with pgvector cosine similarity > 0.85 (Stage 7a).
+Queries the full edit history and supersession chain of a fragment. Returns previous versions modified via amend (fragment_versions) and the superseded_by link chain. Use to track "when and by what was this fragment superseded?"
 
-Stage 7b applies the NLI classifier (`NLIClassifier.js`) to each candidate pair. The mDeBERTa model produces entailment/contradiction/neutral probabilities in ~50-200ms on CPU. High-confidence contradictions (score >= 0.8) are resolved immediately without an LLM call — this handles clear logical contradictions such as "the server never restarts" vs. "the server restarts daily." Clear entailments (score >= 0.6) are skipped as non-contradictory. This stage typically eliminates 50-70% of candidate pairs from requiring LLM evaluation.
+| Parameter | Type | Required | Description |
+|-----------|------|:--------:|-------------|
+| id | string | Y | Target fragment ID |
+| agentId | string | | Agent ID |
 
-Stage 7c escalates NLI-uncertain cases to Gemini CLI for contextual adjudication. This handles numerical contradictions (e.g., "TTL is 3600s" vs. "TTL is 300s") and domain-specific conflicts that NLI models cannot reason about. When Gemini CLI is unavailable, pairs with similarity > 0.92 are queued to Redis (`frag:pending_contradictions`) for later reprocessing in Stage 7.5.
+Return value: `{ current, versions, superseded_by_chain }`. current is the current fragment state, versions is an array of pre-amend versions (newest first), superseded_by_chain is an array of subsequent fragments that superseded this one.
 
-Confirmed contradictions trigger: (1) a `contradicts` edge in `fragment_links`; (2) a `superseded_by` edge from the older to the newer fragment; (3) importance halving of the older fragment (anchors exempt). The timestamp is updated only for successfully processed fragments, ensuring failed Gemini calls do not cause fragments to be skipped in subsequent cycles.
+---
+
+## Recommended Usage Flow
+
+- Session start -- Call `context()` to load core memories. Preferences, error patterns, and procedures are restored. If unreflected sessions exist, a hint is displayed.
+- During work -- Save important decisions, errors, and procedures with `remember()`. Similar fragments are automatically linked at storage time. Use `recall()` to search past experience when needed. After resolving an error, clean up the error fragment with `forget()` and record the resolution procedure with `remember()`.
+- Session end -- Use `reflect()` to persist session content as structured fragments. Even without manual invocation, AutoReflect runs automatically on session end/expiration.
+
+---
+
+## MemoryEvaluator
+
+When the server starts, the MemoryEvaluator worker runs in the background. It is a singleton started via `getMemoryEvaluator().start()`. On SIGTERM/SIGINT, it stops as part of the graceful shutdown flow.
+
+The worker polls the Redis queue `memory_evaluation` every 5 seconds. It waits when the queue is empty. When a job is dequeued, it calls Gemini CLI (`geminiCLIJson`) to evaluate the fragment content's soundness. Evaluation results are used to update the utility_score and verified_at in the fragments table.
+
+New fragments are automatically enqueued for evaluation when stored via remember. Evaluation is decoupled from storage, so it does not affect remember call response time.
+
+In environments where Gemini CLI is not installed, the worker starts but skips evaluation tasks.
+
+---
+
+## MemoryConsolidator
+
+Fragment storage flow: When `remember()` is called, ConflictResolver's `autoLinkOnRemember` immediately creates `related` links with fragments sharing the same topic. When the `embedding_ready` event fires, GraphLinker adds semantic similarity-based links. MemoryConsolidator is a separate periodic pipeline that maintains this link network.
+
+An 18-step maintenance pipeline that runs when the memory_consolidate tool is invoked or the internal scheduler triggers (every 6 hours, adjustable via CONSOLIDATE_INTERVAL_MS).
+
+- **TTL tier transitions**: hot -> warm -> cold demotion based on access frequency and elapsed time. warm -> permanent promotion only targets fragments with importance>=0.8 and `quality_verified IS DISTINCT FROM FALSE` -- a Circuit Breaker pattern that blocks permanent tier entry for fragments explicitly judged negative (FALSE) (TRUE=normal, NULL+is_anchor=anchor fallback, NULL+importance>=0.9=offline fallback). Permanent-tier fragments with is_anchor=false + importance<0.5 + 180 days without access are demoted to cold (parole)
+- **Importance decay**: Batch-processed via a single PostgreSQL `POWER()` SQL. Formula: `importance * 2^(-dt / halfLife)`. dt is computed from `COALESCE(last_decay_at, accessed_at, created_at)`. After application, `last_decay_at = NOW()` is set (idempotency). Per-type half-lives -- procedure:30d, fact:60d, decision:90d, error:45d, preference:120d, relation:90d, others:60d. `is_anchor=true` excluded, minimum 0.05 guaranteed
+- **Expired fragment deletion (multi-dimensional GC)**: Judged by 5 composite conditions. (a) utility_score < 0.15 + 60 days inactive, (b) isolated fact/decision fragments (0 access, 0 links, 30+ days, importance < 0.2), (c) legacy compatibility condition (importance < 0.1, 90 days), (d) resolved error fragments (`[resolved]` prefix + 30+ days + importance < 0.3), (e) NULL type fragments (gracePeriod elapsed + importance < 0.2). Fragments within the 7-day gracePeriod are protected. Max 50 deletions per cycle. `is_anchor=true` and `permanent` tier excluded
+- **Duplicate merging**: Fragments with identical content_hash are merged into the most important one. Links and access stats are consolidated
+- **Missing embedding backfill**: Triggers async embedding generation for fragments with NULL embedding
+- **Retroactive auto-linking (5.5)**: GraphLinker.retroLink() processes up to 20 orphan fragments that have embeddings but no links, automatically creating relationships
+- **utility_score recalculation**: Updated via `importance * (1 + ln(max(access_count, 1))) / age_months^0.3`. Dividing by the 0.3 power of age (months) gradually lowers older fragments' scores (1 month / 1.00, 12 months / 2.29, 24 months / 2.88). Then registers fragments with ema_activation>0.3 AND importance<0.4 for MemoryEvaluator re-evaluation
+- **Auto anchor promotion**: Promotes fragments with access_count >= 10 + importance >= 0.8 to `is_anchor=true`
+- **Incremental contradiction detection (3-stage hybrid)**: For new fragments since the last check, extracts pairs with pgvector cosine similarity > 0.85 against existing fragments in the same topic (Stage 1). NLI classifier (mDeBERTa ONNX) determines entailment/contradiction/neutral (Stage 2) -- high-confidence contradictions (conf >= 0.8) are resolved immediately without Gemini, clear entailments pass through immediately. Only NLI-uncertain cases (numerical/domain contradictions) escalate to Gemini CLI (Stage 3). On confirmation, `contradicts` link + temporal logic resolution (older fragment importance reduced + `superseded_by` link). Resolution results are automatically recorded as `decision` type fragments (audit trail) -- trackable via `recall(keywords=["contradiction","resolved"])`. When CLI is unavailable, pairs with similarity > 0.92 are queued in a Redis pending queue
+- **Pending contradiction post-processing**: When Gemini CLI becomes available, up to 10 items are dequeued for re-evaluation
+- **Feedback report generation**: Aggregates tool_feedback/task_feedback data to produce per-tool usefulness reports
+- **Feedback-adaptive importance correction (10.5)**: Combines the last 24 hours of tool_feedback data with session recall history to incrementally adjust importance. `sufficient=true`: +5%, `sufficient=false`: -2.5%, `relevant=false`: -5%. Criteria: fragments matching session_id, max 20/session, lr=0.05, clipped to [0.05, 1.0]. is_anchor=true fragments excluded
+- **Redis index cleanup + stale fragment collection**: Removes orphaned keyword indexes and returns a list of fragments past their verification cycle
+- **session_reflect noise cleanup**: Among topic='session_reflect' fragments, preserves only the latest 5 per type and deletes the rest with 30+ days age + importance < 0.3 (max 30 per cycle)
+- **Supersession batch detection**: For fragment pairs with the same topic + type and embedding similarity in the 0.7~0.85 range, Gemini CLI determines if a supersession relationship exists. On confirmation, superseded_by link + valid_to set + importance halved. Operates complementarily to GraphLinker's >= 0.85 range
+- **Decay application (EMA dynamic half-life)**: Applies exponential decay to all fragments via PostgreSQL `POWER()` batch SQL. Fragments with high `ema_activation` get their half-life extended up to 2x (`computeDynamicHalfLife`). Formula: `importance * 2^(-dt / (halfLife * clamp(1 + ema * 0.5, 1, 2)))`
+- **EMA batch decay**: Periodically reduces ema_activation of long-unaccessed fragments. 60+ days unaccessed -> ema_activation=0 (reset), 30-60 days unaccessed -> ema_activation*0.5 (halved). is_anchor=true fragments excluded. Prevents long-idle fragments from retaining past boost values despite no search exposure
 
 ---
 
 ## Contradiction Detection Pipeline
 
-A 3-stage hybrid pipeline that suppresses O(N²) LLM comparison costs while maintaining precision.
+A 3-stage hybrid architecture that suppresses O(N^2) LLM comparison costs while maintaining precision.
 
 ```
-On new fragment insertion
-        ↓
+On new fragment storage
+       |
 pgvector cosine similarity > 0.85 candidate filter
-        ↓
+       |
 mDeBERTa NLI (in-process ONNX / external HTTP service)
-  ├── contradiction ≥ 0.8  → resolved immediately (superseded_by link + valid_to update)
-  ├── entailment   ≥ 0.6   → confirmed non-contradiction
-  └── ambiguous            → Gemini CLI escalation
-        ↓
-Preserve knowledge via temporal columns (valid_from/valid_to, superseded_by)
+  +-- contradiction >= 0.8  -> Immediate resolution (superseded_by link + valid_to update)
+  +-- entailment   >= 0.6   -> Confirmed unrelated (no link created)
+  +-- Other (ambiguous)     -> Gemini CLI escalation
+       |
+Temporal axis (valid_from/valid_to, superseded_by) preserves existing data
 ```
 
-- **Cost-efficient**: 99% of candidates handled by NLI; LLM called only for numeric/domain contradictions
-- **Non-destructive**: Version control via temporal columns instead of fragment deletion
-- **Implementation**: `lib/memory/NLIClassifier.js`, `lib/memory/MemoryConsolidator.js`
-- **Env var**: `NLI_SERVICE_URL` — if unset, ONNX in-process mode is used (~280MB, downloaded on first run)
+- **Cost efficiency**: 99% of candidates handled by NLI; LLM calls occur only for numerical/domain contradictions
+- **Zero data loss**: Temporal columns manage versioning instead of deleting fragments
+- **Implementation files**: `lib/memory/NLIClassifier.js`, `lib/memory/MemoryConsolidator.js`
+- **Environment variable**: When `NLI_SERVICE_URL` is unset, ONNX in-process is used automatically (~280MB, downloaded on first run)
 
 ---
 
-## 9. Fault Tolerance and Degradation Behavior
+## MEMORY_CONFIG
 
-The system is designed to degrade gracefully rather than fail hard when external dependencies are unavailable.
-
-### 9.1 Redis Unavailability
-
-When `REDIS_ENABLED=false` (the default for minimal installations), Redis is not connected and the `/health` endpoint reports `redis.status: "disabled"` with HTTP 200 — this is not considered a degraded state.
-
-When `REDIS_ENABLED=true` but the Redis client is not connected or returns an error:
-- The `/health` endpoint reports `redis.status: "down"` and returns HTTP 503.
-- **L1 retrieval** is skipped entirely; `recall` proceeds directly to L2.
-- **Working Memory writes** (`scope: "session"`) fail silently or throw; session-scoped fragments are not persisted.
-- **MemoryEvaluator** cannot dequeue jobs; the worker enters its sleep interval and retries on the next polling cycle.
-- `memory_stats` and `memory_consolidate` may report degraded statistics for Redis-backed counters.
-
-### 9.2 PostgreSQL Connection Failure
-
-PostgreSQL is a hard dependency. Connection pool exhaustion or server unavailability causes `remember`, `recall`, `forget`, `amend`, and all maintenance operations to throw exceptions, which are caught by the tool handler and returned as `{ success: false, error: <message> }` to the MCP client. The `/health` endpoint reports `database.status: "down"` and returns HTTP 503, enabling load balancer health checks to route traffic appropriately.
-
-### 9.3 OpenAI Embedding API Failure
-
-When embedding generation fails (network error, invalid API key, rate limit, quota exhaustion):
-- The fragment is stored without an embedding (`embedding` column remains NULL).
-- L3 vector search is unavailable for that fragment until the embedding is backfilled by a subsequent `memory_consolidate` Stage 9 run.
-- L1 and L2 retrieval continue to function normally.
-- No error is surfaced to the `remember` caller; the operation is reported as successful.
-
-### 9.4 Gemini CLI Unavailability
-
-When the Gemini CLI is not installed or fails:
-- **MemoryEvaluator** skips evaluation entirely; the fragment retains its initial `utility_score` of 1.0.
-- **Contradiction detection** falls back to NLI-only mode. High-confidence NLI contradictions are still resolved; uncertain cases with similarity > 0.92 are queued to Redis pending list for later reprocessing when the CLI becomes available.
-- **AutoReflect** creates a minimal `fact` fragment summarizing session activity and marks the session as "unreflected" rather than generating a full structured summary.
-
-### 9.5 NLI Model Unavailability
-
-When the NLI model (`NLIClassifier.js`) fails to load (download failure, ONNX runtime error, memory constraint):
-- Contradiction detection falls back to the pre-NLI behavior: all candidate pairs are sent directly to Gemini CLI, or queued to Redis pending list when CLI is also unavailable.
-- The model load failure is cached; subsequent calls return `null` immediately without retry. Server restart is required to re-attempt model loading.
-- All other system functionality is unaffected.
-
-### 9.6 Token Encoder Unavailability
-
-If `js-tiktoken` fails to initialize the `cl100k_base` encoder at runtime, `FragmentFactory` falls back to a `Math.ceil(text.length / 4)` character-based approximation. This approximation overestimates token count for CJK-heavy content and underestimates for heavily punctuated ASCII. Operators storing predominantly Korean or Chinese content should ensure the encoder initializes correctly to avoid systematic `tokenBudget` miscalculation.
-
----
-
-## 10. Configuration
-
-### 10.1 Memory System Configuration
-
-`config/memory.js` exports a single named constant:
+Configuration file defined in `config/memory.js`. Ranking weights and stale thresholds can be adjusted without modifying server code.
 
 ```js
 export const MEMORY_CONFIG = {
   ranking: {
-    // Heuristic defaults. importanceWeight + recencyWeight must equal 1.0.
-    // Adjust for domain-specific retrieval characteristics.
-    importanceWeight   : 0.6,
-    recencyWeight      : 0.4,
-    activationThreshold: 100   // Composite ranking activates above this fragment count
+    importanceWeight    : 0.4,   // Importance weight in time-semantic composite ranking
+    recencyWeight       : 0.3,   // Temporal proximity weight (exponential decay from anchorTime)
+    semanticWeight      : 0.3,   // Semantic similarity weight
+    activationThreshold : 0,     // Always apply composite ranking
+    recencyHalfLifeDays : 30,    // Temporal proximity half-life (days)
   },
   staleThresholds: {
-    // Days of inactivity before cold-tier expiration.
-    procedure: 30,
-    fact      : 60,
-    decision  : 90,
-    default   : 60
+    procedure: 30,   // Stale threshold for procedure fragments (days)
+    fact      : 60,  // Stale threshold for fact fragments (days)
+    decision  : 90,  // Stale threshold for decision fragments (days)
+    default   : 60   // Stale threshold for other types (days)
   },
   halfLifeDays: {
-    // Exponential decay half-lives in days. importance × 2^(−Δt/halfLife).
-    // Δt measured from last_decay_at (idempotent); falls back to accessed_at / created_at.
-    procedure : 30,
+    procedure : 30,  // Decay half-life -- time for importance to halve (days)
     fact      : 60,
     decision  : 90,
     error     : 45,
@@ -1076,136 +868,175 @@ export const MEMORY_CONFIG = {
     default   : 60
   },
   rrfSearch: {
-    k             : 60,   // RRF denominator constant. Higher k reduces top-rank dominance.
-    l1WeightFactor: 2.0   // Multiplier applied to L1 Redis results for priority injection.
+    k             : 60,   // RRF denominator constant. Larger values reduce top-rank dependency
+    l1WeightFactor: 2.0   // Weight multiplier for L1 Redis results (highest priority injection)
   },
-  linkedFragmentLimit: 10,  // Max linked neighbors returned per recall
+  linkedFragmentLimit: 10,  // Max 1-hop linked fragments on recall with includeLinks
+  embeddingWorker: {
+    batchSize      : 10,      // Fragments per batch
+    intervalMs     : 5000,    // Polling interval (ms)
+    retryLimit     : 3,       // Retry count on failure
+    retryDelayMs   : 2000,    // Retry interval (ms)
+    queueKey       : "memento:embedding_queue"
+  },
+  contextInjection: {
+    maxCoreFragments   : 15,     // Core Memory max fragment count
+    maxWmFragments     : 10,     // Working Memory max fragment count
+    typeSlots          : {       // Per-type max slots
+      preference : 5,
+      error      : 5,
+      procedure  : 5,
+      decision   : 3,
+      fact       : 3
+    },
+    defaultTokenBudget : 2000
+  },
+  pagination: {
+    defaultPageSize : 20,
+    maxPageSize     : 50
+  },
+  gc: {
+    utilityThreshold       : 0.15,   // Below this + inactive = deletion candidate
+    gracePeriodDays        : 7,      // Minimum survival period (days)
+    inactiveDays           : 60,     // Inactivity period (days)
+    maxDeletePerCycle      : 50,     // Max deletions per cycle
+    factDecisionPolicy     : {
+      importanceThreshold  : 0.2,    // GC importance threshold for fact/decision
+      orphanAgeDays        : 30      // Orphan fact/decision deletion threshold (days)
+    },
+    errorResolvedPolicy    : {
+      maxAgeDays           : 30,     // [resolved] error fragment deletion threshold (days)
+      maxImportance        : 0.3     // Below this = deletion candidate
+    }
+  },
+  reflectionPolicy: {
+    maxAgeDays       : 30,       // session_reflect fragment deletion threshold (days)
+    maxImportance    : 0.3,      // Below this = deletion candidate
+    keepPerType      : 5,        // Keep latest N per type
+    maxDeletePerCycle: 30        // Max deletions per cycle
+  },
+  semanticSearch: {
+    minSimilarity: 0.2,          // L3 pgvector search minimum similarity (default 0.2)
+    limit        : 10            // L3 max return count
+  },
   temperatureBoost: {
-    warmWindowDays     : 7,    // Fragments accessed within this window receive warmBoost
-    warmBoost          : 0.2,  // Score bonus for recently accessed fragments
-    highAccessBoost    : 0.15, // Score bonus for fragments exceeding access threshold
-    highAccessThreshold: 5,    // Minimum access count to qualify for highAccessBoost
-    learningBoost      : 0.3   // Score bonus for learning_extraction fragments
+    warmWindowDays     : 7,      // Apply warmBoost to fragments accessed within this window
+    warmBoost          : 0.2,    // Score boost for recently accessed fragments
+    highAccessBoost    : 0.15,   // Score boost for fragments exceeding access threshold
+    highAccessThreshold: 5,      // Access count threshold for highAccessBoost
+    learningBoost      : 0.3     // Score boost for learning_extraction fragments
   }
 };
 ```
 
-`halfLifeDays` controls the exponential decay rate independently of `staleThresholds`; a fragment may still be active (not yet cold) while its importance has already decayed significantly. The `rrfSearch.k = 60` default follows the canonical Cormack, Clarke, and Buettcher (2009) recommendation for web retrieval; domain-specific corpora with tighter rank distributions may benefit from lower values.
+The sum of importanceWeight + recencyWeight + semanticWeight must equal 1.0. halfLifeDays determines decay speed and operates independently of staleThresholds. rrfSearch.k is the RRF denominator stabilization constant, with 60 as the general-purpose default. gc.factDecisionPolicy cleans up orphan fact/decision fragments under separate criteria to reduce search noise.
 
-### 10.2 Environment Variables
+---
 
-#### Server
+## Environment Variables
+
+### Server
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PORT` | `57332` | TCP port for the HTTP listener |
-| `MEMENTO_ACCESS_KEY` | (empty) | Bearer token for authentication. Authentication disabled when empty. |
-| `SESSION_TTL_MINUTES` | `60` | Session expiration interval in minutes |
-| `LOG_DIR` | `/var/log/mcp` | Winston log file directory |
-| `ALLOWED_ORIGINS` | (empty) | Comma-separated allowed Origin values. All origins permitted when empty. |
-| `RATE_LIMIT_WINDOW_MS` | `60000` | Rate limiting window size in milliseconds |
-| `RATE_LIMIT_MAX_REQUESTS` | `120` | Maximum requests per IP within the window |
-| `EVALUATOR_MAX_QUEUE` | `100` | MemoryEvaluator queue size cap (oldest jobs dropped when exceeded) |
-| `OAUTH_ALLOWED_REDIRECT_URIS` | (empty) | OAuth redirect_uri allowed prefixes (comma-separated). When unset, only localhost redirect URIs are permitted. |
+| PORT | 57332 | HTTP listen port |
+| MEMENTO_ACCESS_KEY | (none) | Bearer authentication key. Authentication disabled when unset |
+| SESSION_TTL_MINUTES | 60 | Session TTL (minutes) |
+| LOG_DIR | /var/log/mcp | Winston log file directory |
+| ALLOWED_ORIGINS | (none) | Allowed Origins list. Comma-separated. All origins allowed when unset |
+| RATE_LIMIT_WINDOW_MS | 60000 | Rate limiting window size (ms) |
+| RATE_LIMIT_MAX_REQUESTS | 120 | Max requests per IP per window |
+| CONSOLIDATE_INTERVAL_MS | 21600000 | Auto-maintenance (consolidate) interval (ms). Default 6 hours |
+| EVALUATOR_MAX_QUEUE | 100 | MemoryEvaluator queue size cap (older jobs dropped on overflow) |
+| OAUTH_ALLOWED_REDIRECT_URIS | (none) | OAuth redirect_uri allowed prefixes (comma-separated, only localhost allowed when unset) |
 
-#### PostgreSQL
+### PostgreSQL
 
-`POSTGRES_*` variables take precedence over `DB_*` equivalents. Both forms are accepted.
+POSTGRES_* prefixes take precedence over DB_* prefixes. Both formats can be mixed.
 
 | Variable | Description |
 |----------|-------------|
-| `POSTGRES_HOST` / `DB_HOST` | Database server hostname |
-| `POSTGRES_PORT` / `DB_PORT` | Port. Default: `5432` |
-| `POSTGRES_DB` / `DB_NAME` | Database name |
-| `POSTGRES_USER` / `DB_USER` | Database user |
-| `POSTGRES_PASSWORD` / `DB_PASSWORD` | Database password |
-| `DB_MAX_CONNECTIONS` | Pool maximum size. Default: `20` |
-| `DB_IDLE_TIMEOUT_MS` | Idle connection eviction timeout (ms). Default: `30000` |
-| `DB_CONN_TIMEOUT_MS` | Connection acquisition timeout (ms). Default: `10000` |
-| `DB_QUERY_TIMEOUT` | Query execution timeout (ms). Default: `30000` |
+| POSTGRES_HOST / DB_HOST | Host address |
+| POSTGRES_PORT / DB_PORT | Port number. Default 5432 |
+| POSTGRES_DB / DB_NAME | Database name |
+| POSTGRES_USER / DB_USER | Connection user |
+| POSTGRES_PASSWORD / DB_PASSWORD | Connection password |
+| DB_MAX_CONNECTIONS | Connection pool max connections. Default 20 |
+| DB_IDLE_TIMEOUT_MS | Idle connection return timeout ms. Default 30000 |
+| DB_CONN_TIMEOUT_MS | Connection acquisition timeout ms. Default 10000 |
+| DB_QUERY_TIMEOUT | Query timeout ms. Default 30000 |
 
-#### Redis
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `REDIS_ENABLED` | `false` | Enables Redis. When `false`, L1 retrieval and caching are disabled. |
-| `REDIS_SENTINEL_ENABLED` | `false` | Activates Sentinel high-availability mode |
-| `REDIS_HOST` | `localhost` | Redis server hostname |
-| `REDIS_PORT` | `6379` | Redis server port |
-| `REDIS_PASSWORD` | (empty) | Redis authentication password |
-| `REDIS_DB` | `0` | Redis logical database index |
-| `REDIS_MASTER_NAME` | `mymaster` | Sentinel master name |
-| `REDIS_SENTINELS` | `localhost:26379,...` | Comma-separated `host:port` Sentinel node list |
-
-#### Caching
+### Redis
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CACHE_ENABLED` | Inherits `REDIS_ENABLED` | Enables query result caching |
-| `CACHE_DB_TTL` | `300` | Database query cache TTL (seconds) |
-| `CACHE_SESSION_TTL` | `SESSION_TTL_MS / 1000` | Session cache TTL (seconds) |
+| REDIS_ENABLED | false | Enable Redis. When false, L1 search and caching are disabled |
+| REDIS_SENTINEL_ENABLED | false | Use Sentinel mode |
+| REDIS_HOST | localhost | Redis server host |
+| REDIS_PORT | 6379 | Redis server port |
+| REDIS_PASSWORD | (none) | Redis authentication password |
+| REDIS_DB | 0 | Redis database number |
+| REDIS_MASTER_NAME | mymaster | Sentinel master name |
+| REDIS_SENTINELS | localhost:26379, localhost:26380, localhost:26381 | Sentinel node list. Comma-separated host:port format |
 
-#### AI Services
+### Caching
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OPENAI_API_KEY` | (empty) | OpenAI API key for embedding generation. When using Ollama or other compatible local servers, set to any non-empty string (e.g. `ollama`). |
-| `EMBEDDING_PROVIDER` | `openai` | Embedding provider: `openai` (default) \| `gemini` \| `ollama` \| `localai` \| `custom`. Model, dimensions, and base URL are automatically set to provider defaults when this is set. |
-| `EMBEDDING_API_KEY` | (empty) | Generic embedding API key. Falls back to `OPENAI_API_KEY` or `GEMINI_API_KEY` depending on provider. |
-| `EMBEDDING_BASE_URL` | (empty) | Custom OpenAI-compatible endpoint. E.g. `http://localhost:11434/v1` for Ollama. Automatically set for known providers. |
-| `EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model identifier. Provider default is used when `EMBEDDING_PROVIDER` is set and this is omitted. |
-| `EMBEDDING_DIMENSIONS` | `1536` | Embedding dimensionality. Must match `vector(N)` in the schema. Provider default is used when `EMBEDDING_PROVIDER` is set and this is omitted. |
-| `EMBEDDING_SUPPORTS_DIMS_PARAM` | (provider default) | Whether to send the `dimensions` parameter to the embedding API. Auto-determined from the provider; override only when using a custom-compatible server with non-standard behavior. |
-| `GEMINI_API_KEY` | (empty) | Google Gemini API key. Used when `EMBEDDING_PROVIDER=gemini` and also as fallback for Gemini CLI operations. |
+| CACHE_ENABLED | Same as REDIS_ENABLED | Enable query result caching |
+| CACHE_DB_TTL | 300 | DB query result cache TTL (seconds) |
+| CACHE_SESSION_TTL | SESSION_TTL_MS / 1000 | Session cache TTL (seconds) |
 
-**NLI model:** The NLI classifier (`@huggingface/transformers` + ONNX Runtime) requires no API key. The mDeBERTa model (~280MB ONNX) is downloaded automatically on first use and cached locally. No GPU is required; inference runs on CPU via ONNX Runtime.
+### AI
 
-**Gemini CLI:** When the `gemini` CLI is installed and available on `$PATH`, it is used in preference to the REST API for all Gemini operations (fragment evaluation, contradiction adjudication, auto-reflect summary generation). Install via `npm install -g @anthropic/gemini-cli` or the platform-specific package manager.
+| Variable | Default | Description |
+|----------|---------|-------------|
+| OPENAI_API_KEY | (none) | OpenAI API key. Used when `EMBEDDING_PROVIDER=openai` |
+| EMBEDDING_PROVIDER | openai | Embedding provider. `openai` \| `gemini` \| `ollama` \| `localai` \| `custom` |
+| EMBEDDING_API_KEY | (none) | Generic embedding API key. Falls back to `OPENAI_API_KEY` when unset |
+| EMBEDDING_BASE_URL | (none) | OpenAI-compatible endpoint URL when `EMBEDDING_PROVIDER=custom` |
+| EMBEDDING_MODEL | (provider default) | Embedding model to use. Provider-specific default applied when omitted |
+| EMBEDDING_DIMENSIONS | (provider default) | Embedding vector dimensions. Must match the DB schema's vector dimension |
+| EMBEDDING_SUPPORTS_DIMS_PARAM | (provider default) | Override dimensions parameter support (`true`\|`false`) |
+| GEMINI_API_KEY | (none) | Google Gemini API key. Used when `EMBEDDING_PROVIDER=gemini` |
 
 ---
 
-## 10.3 Embedding Service Configuration
+## Switching Embedding Providers
 
-Embeddings power L3 semantic search and automatic fragment linking. The default provider is OpenAI `text-embedding-3-small`.
+Switch providers with a single `EMBEDDING_PROVIDER` environment variable. Model, dimensions, and base URL are automatically determined from provider defaults, with individual environment variable overrides available as needed.
 
-Set `EMBEDDING_PROVIDER` to switch providers. Model, dimensions, and base URL are automatically set to provider defaults; override with individual environment variables only when needed. For providers that are not OpenAI-compatible (Cohere, Voyage AI, etc.), replace the `generateEmbedding` function in `lib/tools/embedding.js` directly.
+Embeddings are used for L3 semantic search and automatic link creation.
 
-> **Dimension change warning:** Changing `EMBEDDING_DIMENSIONS` requires recreating the PostgreSQL schema and regenerating all embeddings. Run `migration-007` and `backfill-embeddings.js` after the switch (see the Gemini section below for an example).
-
-> **halfvec support:** For models with >2000 dimensions (e.g., Gemini's 3072-dim `gemini-embedding-001`), `migration-007` converts the `embedding` column to `halfvec` type, which supports HNSW indexing up to 4000 dimensions (requires pgvector ≥0.7.0).
-
-See `.env.example` for a configuration template.
+> Dimension change warning: Changing `EMBEDDING_DIMENSIONS` requires a PostgreSQL schema change. Run `node scripts/migration-007-flexible-embedding-dims.js` followed by `node scripts/backfill-embeddings.js` in order.
 
 ---
 
-### Switching Embedding Providers
-
-#### OpenAI (default)
+### OpenAI (default)
 
 ```env
+EMBEDDING_PROVIDER=openai
 OPENAI_API_KEY=sk-...
-EMBEDDING_MODEL=text-embedding-3-small
-EMBEDDING_DIMENSIONS=1536
 ```
 
 | Model | Dimensions | Notes |
-|-------|------------|-------|
-| text-embedding-3-small | 1536 | Default. Cost-efficient. |
-| text-embedding-3-large | 3072 | Higher accuracy. 2× cost. |
-| text-embedding-ada-002 | 1536 | Legacy. |
+|-------|-----------|-------|
+| text-embedding-3-small | 1536 | Default. Cost-efficient |
+| text-embedding-3-large | 3072 | High precision. 2x cost |
+| text-embedding-ada-002 | 1536 | Legacy compatible |
 
 ---
 
-#### Google Gemini (`gemini-embedding-001`, 3072 dims)
+### Google Gemini
 
-`text-embedding-004` was discontinued on January 14, 2026. The current recommended model is `gemini-embedding-001` (3072 dimensions).
+`text-embedding-004` was discontinued January 14, 2026. The currently recommended model is `gemini-embedding-001` (3072 dimensions).
 
 ```env
 EMBEDDING_PROVIDER=gemini
 GEMINI_API_KEY=AIza...
 ```
 
-First-time switch to 3072 dims requires `migration-007` to convert the `embedding` column to `halfvec` type (pgvector ≥0.7.0 required), followed by a full re-embedding pass:
+3072 dimensions differs from the default schema (1536), so migration-007 must be run on first switch:
 
 ```bash
 EMBEDDING_DIMENSIONS=3072 DATABASE_URL=$DATABASE_URL \
@@ -1213,78 +1044,63 @@ EMBEDDING_DIMENSIONS=3072 DATABASE_URL=$DATABASE_URL \
 DATABASE_URL=$DATABASE_URL node scripts/backfill-embeddings.js
 ```
 
+> halfvec type requires pgvector 0.7.0 or later. Check version: `SELECT extversion FROM pg_extension WHERE extname = 'vector';`
+
 | Model | Dimensions | Notes |
-|-------|------------|-------|
-| gemini-embedding-001 | 3072 | Current recommended model. High precision. |
+|-------|-----------|-------|
+| gemini-embedding-001 | 3072 | Current recommended model. High precision |
+| text-embedding-004 | 768 | Discontinued 2026-01-14 |
 
 ---
 
-#### Ollama (local, free)
+### Ollama (local)
 
-Ollama exposes a `/v1/embeddings` OpenAI-compatible endpoint. No code changes required.
+Ollama must be running at `http://localhost:11434`.
+
+```env
+EMBEDDING_PROVIDER=ollama
+# EMBEDDING_MODEL=nomic-embed-text  # default
+```
 
 ```bash
+# Download models
 ollama pull nomic-embed-text
 ollama pull mxbai-embed-large
 ```
 
-```env
-OPENAI_API_KEY=ollama
-EMBEDDING_BASE_URL=http://localhost:11434/v1
-EMBEDDING_MODEL=nomic-embed-text
-EMBEDDING_DIMENSIONS=768
-```
-
 | Model | Dimensions | Notes |
-|-------|------------|-------|
-| nomic-embed-text | 768 | 8192-token context, strong MTEB scores |
-| mxbai-embed-large | 1024 | 512-token context, competitive MTEB scores |
-| all-minilm | 384 | Lightweight, fast inference |
+|-------|-----------|-------|
+| nomic-embed-text | 768 | 8192 token context, high MTEB performance |
+| mxbai-embed-large | 1024 | 512 context, competitive MTEB scores |
+| all-minilm | 384 | Ultra-lightweight, suitable for local testing |
 
 ---
 
-#### LocalAI (local, OpenAI-compatible)
+### LocalAI (local)
 
 ```env
-OPENAI_API_KEY=localai
-EMBEDDING_BASE_URL=http://localhost:8080/v1
-EMBEDDING_MODEL=text-embedding-ada-002
-EMBEDDING_DIMENSIONS=1536
+EMBEDDING_PROVIDER=localai
 ```
 
 ---
 
-#### LM Studio (local, OpenAI-compatible)
+### Custom OpenAI-Compatible Server
 
-Enable the Local Server in LM Studio, load an embedding model, then:
+Use for any OpenAI-compatible server such as LM Studio or llama.cpp.
 
 ```env
-OPENAI_API_KEY=lmstudio
-EMBEDDING_BASE_URL=http://localhost:1234/v1
-EMBEDDING_MODEL=nomic-ai/nomic-embed-text-v1.5-GGUF
-EMBEDDING_DIMENSIONS=768
+EMBEDDING_PROVIDER=custom
+EMBEDDING_BASE_URL=http://my-server:8080/v1
+EMBEDDING_API_KEY=my-key
+EMBEDDING_MODEL=my-model
+EMBEDDING_DIMENSIONS=1024
 ```
 
 ---
 
-#### llama.cpp server (local, OpenAI-compatible)
+### Commercial APIs (Custom Adapter Required)
 
-```bash
-./llama-server -m nomic-embed-text-v1.5.Q4_K_M.gguf --embedding --port 8080
-```
-
-```env
-OPENAI_API_KEY=llamacpp
-EMBEDDING_BASE_URL=http://localhost:8080/v1
-EMBEDDING_MODEL=nomic-embed-text-v1.5
-EMBEDDING_DIMENSIONS=768
-```
-
----
-
-### Proprietary APIs (custom adapter required, code replacement)
-
-Cohere, Voyage AI, Gemini, Mistral, Jina AI, and Nomic either have non-OpenAI-compatible APIs or require specific request structures. Replace the `generateEmbedding` function in `lib/tools/embedding.js` with the snippet for your provider.
+Cohere, Voyage AI, Mistral, Jina AI, and Nomic are either incompatible with the OpenAI SDK or have separate API structures. Replace the `generateEmbedding` function in `lib/tools/embedding.js` with the examples below.
 
 #### Cohere
 
@@ -1293,7 +1109,7 @@ npm install cohere-ai
 ```
 
 ```js
-// lib/tools/embedding.js — replace generateEmbedding
+// lib/tools/embedding.js -- replace generateEmbedding
 import { CohereClient } from "cohere-ai";
 
 const cohere = new CohereClient({ token: process.env.COHERE_API_KEY });
@@ -1315,7 +1131,7 @@ EMBEDDING_DIMENSIONS=1536
 ```
 
 | Model | Dimensions | Notes |
-|-------|------------|-------|
+|-------|-----------|-------|
 | embed-v4.0 | 1536 | Latest, multilingual |
 | embed-multilingual-v3.0 | 1024 | Legacy multilingual |
 
@@ -1324,7 +1140,7 @@ EMBEDDING_DIMENSIONS=1536
 #### Voyage AI
 
 ```js
-// lib/tools/embedding.js — replace generateEmbedding
+// lib/tools/embedding.js -- replace generateEmbedding
 export async function generateEmbedding(text) {
   const res = await fetch("https://api.voyageai.com/v1/embeddings", {
     method:  "POST",
@@ -1345,47 +1161,19 @@ EMBEDDING_DIMENSIONS=1024
 ```
 
 | Model | Dimensions | Notes |
-|-------|------------|-------|
+|-------|-----------|-------|
 | voyage-3.5 | 1024 | Highest accuracy |
-| voyage-3.5-lite | 512 | Lower cost, faster |
-| voyage-code-3 | 1024 | Code-optimized |
-
----
-
-#### Google Gemini
-
-The existing `GEMINI_API_KEY` environment variable can be reused.
-
-```js
-// lib/tools/embedding.js — replace generateEmbedding
-export async function generateEmbedding(text) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${process.env.GEMINI_API_KEY}`;
-  const res  = await fetch(url, {
-    method:  "POST",
-    headers: { "Content-Type": "application/json" },
-    body:    JSON.stringify({
-      model:   "models/text-embedding-004",
-      content: { parts: [{ text }] }
-    })
-  });
-  const data = await res.json();
-  return normalizeL2(data.embedding.values);
-}
-```
-
-```env
-GEMINI_API_KEY=...
-EMBEDDING_DIMENSIONS=768
-```
+| voyage-3.5-lite | 512 | Low cost, fast |
+| voyage-code-3 | 1024 | Code-specialized |
 
 ---
 
 #### Mistral AI
 
-Uses OpenAI SDK — only `baseURL` differs.
+OpenAI SDK compatible, so just swap the `baseURL`.
 
 ```js
-// lib/tools/embedding.js — replace generateEmbedding
+// lib/tools/embedding.js -- replace generateEmbedding
 import OpenAI from "openai";
 
 const client = new OpenAI({
@@ -1411,10 +1199,10 @@ EMBEDDING_DIMENSIONS=1024
 
 #### Jina AI
 
-Free tier: 100 RPM / 1M tokens per month.
+Free tier: 100 RPM / 1M tokens/month.
 
 ```js
-// lib/tools/embedding.js — replace generateEmbedding
+// lib/tools/embedding.js -- replace generateEmbedding
 export async function generateEmbedding(text) {
   const res = await fetch("https://api.jina.ai/v1/embeddings", {
     method:  "POST",
@@ -1439,18 +1227,18 @@ EMBEDDING_DIMENSIONS=1024
 ```
 
 | Model | Dimensions | Notes |
-|-------|------------|-------|
-| jina-embeddings-v3 | 1024 | MRL support (32–1024 flexible) |
-| jina-embeddings-v2-base-en | 768 | English-only |
+|-------|-----------|-------|
+| jina-embeddings-v3 | 1024 | MRL support (32~1024 flexible dimensions) |
+| jina-embeddings-v2-base-en | 768 | English-specialized |
 
 ---
 
 #### Nomic
 
-Free tier: 1M tokens per month. Uses OpenAI SDK with a custom `baseURL`.
+Free tier: 1M tokens/month. OpenAI SDK compatible, so applicable via `baseURL` change.
 
 ```js
-// lib/tools/embedding.js — replace generateEmbedding
+// lib/tools/embedding.js -- replace generateEmbedding
 import OpenAI from "openai";
 
 const client = new OpenAI({
@@ -1476,108 +1264,163 @@ EMBEDDING_DIMENSIONS=768
 
 ### Provider Comparison
 
-| Provider | Dimensions | Configuration | Free Tier |
-|----------|------------|---------------|-----------|
-| OpenAI text-embedding-3-small | 1536 | Env vars only | No |
-| OpenAI text-embedding-3-large | 3072 | Env vars only | No |
-| Ollama (nomic-embed-text) | 768 | Env vars only | Free (local) |
-| Ollama (mxbai-embed-large) | 1024 | Env vars only | Free (local) |
-| LocalAI | Variable | Env vars only | Free (local) |
-| LM Studio | Variable | Env vars only | Free (local) |
-| llama.cpp | Variable | Env vars only | Free (local) |
-| Cohere embed-v4.0 | 1536 | Code replacement | No |
-| Voyage AI voyage-3.5 | 1024 | Code replacement | No |
-| Google Gemini gemini-embedding-001 | 3072 | Env vars only (`EMBEDDING_PROVIDER=gemini`) | Limited |
-| Mistral mistral-embed | 1024 | Code replacement | No |
-| Jina jina-embeddings-v3 | 1024 | Code replacement | 1M tokens/mo |
-| Nomic nomic-embed-text-v1.5 | 768 | Code replacement | 1M tokens/mo |
+| Service | Dimensions | Configuration | Free Tier |
+|---------|-----------|---------------|-----------|
+| OpenAI text-embedding-3-small | 1536 | `EMBEDDING_PROVIDER=openai` | None |
+| OpenAI text-embedding-3-large | 3072 | `EMBEDDING_PROVIDER=openai` | None |
+| Google Gemini gemini-embedding-001 | 3072 | `EMBEDDING_PROVIDER=gemini` | Yes (limited) |
+| Ollama (nomic-embed-text) | 768 | `EMBEDDING_PROVIDER=ollama` | Fully free (local) |
+| Ollama (mxbai-embed-large) | 1024 | `EMBEDDING_PROVIDER=ollama` | Fully free (local) |
+| LocalAI | Variable | `EMBEDDING_PROVIDER=localai` | Fully free (local) |
+| Custom compatible server | Variable | `EMBEDDING_PROVIDER=custom` | -- |
+| Cohere embed-v4.0 | 1536 | Code replacement | None |
+| Voyage AI voyage-3.5 | 1024 | Code replacement | None |
+| Mistral mistral-embed | 1024 | Code replacement | None |
+| Jina jina-embeddings-v3 | 1024 | Code replacement | Yes (1M/month) |
+| Nomic nomic-embed-text-v1.5 | 768 | Code replacement | Yes (1M/month) |
 
 ---
 
-## 11. Deployment
+## HTTP Endpoints
 
-See **[INSTALL.en.md](docs/INSTALL.en.md)** for full installation, migration, client configuration, and hook setup instructions.
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | /mcp | Streamable HTTP. JSON-RPC request receiver. MCP-Session-Id header required (except initial initialize) |
+| GET | /mcp | Streamable HTTP. Opens SSE stream. For server-side push |
+| DELETE | /mcp | Streamable HTTP. Explicit session termination |
+| GET | /sse | Legacy SSE. Session creation. Authenticate via `accessKey` query parameter |
+| POST | /message?sessionId= | Legacy SSE. JSON-RPC request receiver. Responses delivered via SSE stream |
+| GET | /health | Health check. Verifies DB query (SELECT 1), session state, and Redis connection, returning JSON. When `REDIS_ENABLED=false`, Redis shows as `disabled` with 200 returned. DB failure returns 503 |
+| GET | /metrics | Prometheus metrics. HTTP request counters, session gauges, etc. collected by prom-client |
+| GET | /.well-known/oauth-authorization-server | OAuth 2.0 authorization server metadata |
+| GET | /.well-known/oauth-protected-resource | OAuth 2.0 protected resource metadata |
+| GET | /authorize | OAuth 2.0 authorization endpoint. PKCE code_challenge required |
+| POST | /token | OAuth 2.0 token endpoint. authorization_code exchange |
+| GET | /v1/internal/model/nothing | Admin SPA. Serves app shell HTML (no auth required). Data APIs require master key authentication |
+| GET | /v1/internal/model/nothing/assets/* | Admin static files (admin.css, admin.js). No authentication required |
+| POST | /v1/internal/model/nothing/auth | Master key verification endpoint |
+| GET | /v1/internal/model/nothing/stats | Dashboard statistics (fragment count, API call volume, system metrics, searchMetrics, observability, queues, healthFlags) |
+| GET | /v1/internal/model/nothing/activity | Recent fragment activity log (10 entries) |
+| GET | /v1/internal/model/nothing/keys | API key list |
+| POST | /v1/internal/model/nothing/keys | Create API key. Raw key returned in response exactly once |
+| PUT | /v1/internal/model/nothing/keys/:id | Change API key status (active <-> inactive) |
+| DELETE | /v1/internal/model/nothing/keys/:id | Delete API key |
+| GET | /v1/internal/model/nothing/groups | Key group list |
+| POST | /v1/internal/model/nothing/groups | Create key group |
+| DELETE | /v1/internal/model/nothing/groups/:id | Delete key group |
+| GET | /v1/internal/model/nothing/groups/:id/members | Group member list |
+| POST | /v1/internal/model/nothing/groups/:id/members | Add key to group |
+| DELETE | /v1/internal/model/nothing/groups/:gid/members/:kid | Remove key from group |
+| GET | /v1/internal/model/nothing/memory/overview | Memory overview (type/topic distribution, quality unverified, superseded, recent activity) |
+| GET | /v1/internal/model/nothing/memory/search-events?days=N | Search event analysis (total searches, failed queries, feedback stats) |
+| GET | /v1/internal/model/nothing/memory/fragments | Fragment search/filter (topic, type, key_id, page, limit) |
+| GET | /v1/internal/model/nothing/memory/anomalies | Anomaly detection results |
+| GET | /v1/internal/model/nothing/sessions | Session list (activity enrichment, unreflected session count) |
+| GET | /v1/internal/model/nothing/sessions/:id | Session detail (search events, tool feedback) |
+| POST | /v1/internal/model/nothing/sessions/:id/reflect | Manual reflect execution |
+| DELETE | /v1/internal/model/nothing/sessions/:id | Terminate session |
+| POST | /v1/internal/model/nothing/sessions/cleanup | Expired session cleanup |
+| POST | /v1/internal/model/nothing/sessions/reflect-all | Bulk reflect for unreflected sessions |
+| GET | /v1/internal/model/nothing/logs/files | Log file list (with sizes) |
+| GET | /v1/internal/model/nothing/logs/read | Log content viewing (file, tail, level, search parameters) |
+| GET | /v1/internal/model/nothing/logs/stats | Log statistics (per-level counts, recent errors, disk usage) |
+| GET | /v1/internal/model/nothing/memory/graph?topic=&limit= | Knowledge graph data (nodes + edges) |
+| GET | /v1/internal/model/nothing/export?key_id=&topic= | Fragment JSON Lines stream export |
+| POST | /v1/internal/model/nothing/import | Fragment JSON array import |
 
+### /health Endpoint Policy
+
+| Dependency | Classification | Response when down |
+|------------|---------------|-------------------|
+| PostgreSQL | Required | 503 (degraded) |
+| Redis | Optional | 200 (healthy, with warnings) |
+
+Even when Redis is disabled (`REDIS_ENABLED=false`) or connection fails, the server returns healthy (200). L1 cache and Working Memory are deactivated, but core memory storage/retrieval operates fully on PostgreSQL alone.
+
+Two authentication methods are available. Streamable HTTP authenticates via `Authorization: Bearer <MEMENTO_ACCESS_KEY>` header on the `initialize` request, then maintains the session. Legacy SSE authenticates via `/sse?accessKey=<MEMENTO_ACCESS_KEY>` query parameter.
+
+---
+
+## Tech Stack
+
+- Node.js 20+
+- PostgreSQL 14+ (pgvector extension)
+- Redis 6+ (optional)
+- OpenAI Embedding API (optional)
+- Gemini CLI (for quality evaluation, contradiction escalation, auto reflect summary generation; optional)
+- @huggingface/transformers + ONNX Runtime (NLI contradiction classification, CPU only, auto-installed)
+- MCP Protocol 2025-11-25
+
+PostgreSQL alone powers all core features. Adding Redis enables L1 cascade search and SessionActivityTracker. Adding an OpenAI API enables L3 semantic search and automatic linking. The NLI model is included automatically on npm install, with the ~280MB ONNX model downloaded on first run (cached afterward). NLI alone detects clear logical contradictions immediately; adding Gemini CLI extends coverage to numerical/domain contradictions. Each component can be independently enabled or disabled.
+
+---
+
+## Tests
+
+### Full test suite (no DB required)
 ```bash
-npm run migrate    # DB migration (incremental, schema_migrations table tracking)
+npm test          # Jest (tests/*.test.js) + node:test (tests/unit/*.test.js) sequential. tests/unit/ is node:test exclusive and excluded from Jest.
+```
+
+Individual runs:
+```bash
+npm run test:jest        # Jest -- tests/*.test.js
+npm run test:unit:node   # node:test -- tests/unit/*.test.js
+npm run test:integration # node:test -- tests/integration/*.test.js + tests/e2e/*.test.js
+```
+
+### E2E tests (PostgreSQL required)
+
+Local Docker environment (recommended):
+```bash
+npm run test:e2e:local   # Starts test DB via docker-compose then runs
+```
+
+Using an existing DB connection:
+```bash
+DATABASE_URL=postgresql://user:pass@host:port/db npm run test:e2e
+```
+
+### Full CI (DB required)
+```bash
+npm run test:ci          # npm test + test:e2e
 ```
 
 ---
 
-## 12. Endpoint Reference
+## Installation
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/mcp` | Streamable HTTP: receive JSON-RPC 2.0 request |
-| `GET` | `/mcp` | Streamable HTTP: open SSE stream for server push |
-| `DELETE` | `/mcp` | Streamable HTTP: terminate session |
-| `GET` | `/sse` | Legacy SSE: create session (`accessKey` query parameter) |
-| `POST` | `/message?sessionId=` | Legacy SSE: receive JSON-RPC 2.0 request |
-| `GET` | `/health` | Health check: PostgreSQL, Redis, session counts. Redis disabled → 200; DB or Redis (when enabled) down → 503 |
-| `GET` | `/metrics` | Prometheus metrics (prom-client) |
-| `GET` | `/.well-known/oauth-authorization-server` | OAuth 2.0 authorization server metadata |
-| `GET` | `/.well-known/oauth-protected-resource` | OAuth 2.0 protected resource metadata |
-| `GET` | `/authorize` | OAuth 2.0 authorization endpoint (PKCE required) |
-| `POST` | `/token` | OAuth 2.0 token endpoint (authorization code exchange) |
-| `GET` | `/v1/internal/model/nothing` | Admin SPA app shell (no authentication). Data API endpoints require master key. |
-| `GET` | `/v1/internal/model/nothing/assets/*` | Admin static files (admin.css, admin.js). No authentication required. |
-| `POST` | `/v1/internal/model/nothing/auth` | Master key verification endpoint |
-| `GET` | `/v1/internal/model/nothing/stats` | Dashboard statistics (fragments, API calls, system metrics, searchMetrics, observability, queues, healthFlags) |
-| `GET` | `/v1/internal/model/nothing/activity` | Recent fragment activity log (last 10 entries) |
-| `GET` | `/v1/internal/model/nothing/keys` | List provisioned API keys |
-| `POST` | `/v1/internal/model/nothing/keys` | Create API key. Raw key returned once in response; only hash stored. |
-| `PUT` | `/v1/internal/model/nothing/keys/:id` | Update API key status (active ↔ inactive) |
-| `DELETE` | `/v1/internal/model/nothing/keys/:id` | Delete API key |
-| `GET` | `/v1/internal/model/nothing/groups` | List key groups |
-| `POST` | `/v1/internal/model/nothing/groups` | Create key group |
-| `DELETE` | `/v1/internal/model/nothing/groups/:id` | Delete key group |
-| `GET` | `/v1/internal/model/nothing/groups/:id/members` | List group members |
-| `POST` | `/v1/internal/model/nothing/groups/:id/members` | Add key to group |
-| `DELETE` | `/v1/internal/model/nothing/groups/:gid/members/:kid` | Remove key from group |
-| `GET` | `/v1/internal/model/nothing/memory/overview` | Memory overview (type/topic distribution, quality pending, superseded, recent activity) |
-| `GET` | `/v1/internal/model/nothing/memory/search-events` | Search event analysis (days, total searches, failed queries, feedback stats) |
-| `GET` | `/v1/internal/model/nothing/memory/fragments` | Search/filter fragments (topic, type, key_id, page, limit) |
-| `GET` | `/v1/internal/model/nothing/memory/anomalies` | Anomaly detection results |
-| `GET` | `/v1/internal/model/nothing/sessions` | Session list (activity enrichment, unreflected count) |
-| `GET` | `/v1/internal/model/nothing/sessions/:id` | Session detail (search events, tool feedback) |
-| `POST` | `/v1/internal/model/nothing/sessions/:id/reflect` | Manual reflect execution |
-| `DELETE` | `/v1/internal/model/nothing/sessions/:id` | Terminate session |
-| `POST` | `/v1/internal/model/nothing/sessions/cleanup` | Cleanup expired sessions |
-| `POST` | `/v1/internal/model/nothing/sessions/reflect-all` | Bulk reflect unreflected sessions |
-| `GET` | `/v1/internal/model/nothing/logs/files` | Log file list with sizes |
-| `GET` | `/v1/internal/model/nothing/logs/read` | Parsed log content (file, tail, level, search parameters) |
-| `GET` | `/v1/internal/model/nothing/logs/stats` | Log statistics (level counts, recent errors, disk usage) |
-| `GET` | `/v1/internal/model/nothing/memory/graph?topic=&limit=` | Knowledge graph data (nodes + edges) |
-| `GET` | `/v1/internal/model/nothing/export?key_id=&topic=` | Fragment JSON Lines stream export |
-| `POST` | `/v1/internal/model/nothing/import` | Fragment JSON array import |
+For installation, migration, Claude Code connection, and hook setup, see **[INSTALL.md](docs/INSTALL.md)**.
 
-### /health Endpoint Policy
-
-| Dependency | Type | Response when down |
-|-----------|------|-------------------|
-| PostgreSQL | Required | 503 (degraded) |
-| Redis | Optional | 200 (healthy, with warnings) |
-
-The server returns healthy (200) even when Redis is disabled (`REDIS_ENABLED=false`) or connection fails.
-L1 cache and Working Memory are disabled, but core memory storage/retrieval works with PostgreSQL alone.
+```bash
+npm run migrate    # DB migration (schema_migrations table-based incremental)
+```
 
 ---
 
-## 13. References
+## Why I Built This
 
-Malkov, Y. A., & Yashunin, D. A. (2018). Efficient and robust approximate nearest neighbor search using hierarchical navigable small world graphs. *IEEE Transactions on Pattern Analysis and Machine Intelligence*, 42(4), 824–836.
+Working with AI in production, I kept wasting time re-explaining the same context every single day. I tried embedding notes in system prompts, but the limitations were obvious. As fragments piled up, management fell apart -- search stopped working, and old information clashed with new.
 
-Aristotle. *De Memoria et Reminiscentia* [On Memory and Recollection]. Translated by J. I. Beare. In *The Works of Aristotle*, Vol. III. Oxford University Press, 1931.
+The biggest problem was the endless repetition. Having to re-state things I had already explained, re-confirm settings that were already in place. I would painstakingly correct the AI, get it working perfectly -- only to start a new session and face the exact same issues all over again. It felt like being the training supervisor for a brilliant new hire who graduated top of their class but has their memory wiped clean every morning.
 
-PostgreSQL Global Development Group. (2024). *PostgreSQL 16 Documentation: GIN Indexes*. https://www.postgresql.org/docs/16/gin.html
-
-pgvector. (2024). *Open-source vector similarity search for Postgres*. https://github.com/pgvector/pgvector
-
-Hardt, D., Ed. (2012). *The OAuth 2.0 Authorization Framework*. RFC 6749. IETF.
-
-Sakaguchi, K., Bras, R. L., Bhagavatula, C., & Choi, Y. (2021). WinoGrande: An adversarial winograd schema challenge at scale. *Communications of the ACM*, 64(9), 99–106.
+To solve this pain, I designed a system that decomposes memories into atomic units, searches them hierarchically, and lets them decay naturally over time. Just as humans are creatures of forgetting, this system embraces "appropriate forgetting" as a feature.
 
 ---
 
-*Memento MCP — Fragment-Based Persistent Memory for Language Model Agents*
-*Author: Jinho Choi — jinho.von.choi@nerdvana.kr*
+Memory is not the prerequisite of intelligence. Memory is the condition for it. Even if you know how to play chess, failing to remember yesterday's lost game means repeating the same moves. Even if you speak every language, failing to remember yesterday's conversation means meeting a stranger every time. Even with billions of parameters holding all the world's knowledge, failing to remember yesterday with you makes the AI nothing more than an unfamiliar polymath.
+
+Memory is what enables relationships. Relationships are what enable trust.
+
+Memories do not disappear. They simply drop to the cold tier. And cold fragments left neglected long enough are purged in the next consolidate cycle. This is by design, not a bug. Useless memories must make room. Even the palace of Augustine needs its storeroom tidied.
+
+Even a goldfish -- famously considered brainless -- can remember things for months.
+
+Now your AI can too.
+
+---
+
+<p align="center">
+  Made by <a href="mailto:jinho.von.choi@nerdvana.kr">Jinho Choi</a> &nbsp;|&nbsp;
+  <a href="https://buymeacoffee.com/jinho.von.choi">Buy me a coffee</a>
+</p>
