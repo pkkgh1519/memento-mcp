@@ -63,7 +63,14 @@ export const MEMORY_CONFIG = {
       decision   : 3,
       fact       : 3
     },
-    defaultTokenBudget : 2000
+    defaultTokenBudget : 2000,
+    temperatureBoost   : {
+      warmWindowDays     : 7,
+      warmBoost          : 0.2,
+      highAccessBoost    : 0.15,
+      highAccessThreshold: 5,
+      learningBoost      : 0.3,
+    }
   },
   /** recall 페이지네이션 설정 */
   pagination: {
