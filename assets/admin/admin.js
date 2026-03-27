@@ -3717,8 +3717,8 @@ if (typeof document !== "undefined") {
    15. Exports for testing (Node.js environment detection)
    ================================================================ */
 
-if (typeof module !== "undefined" && module.exports) {
-  module.exports = {
+if (typeof module !== "undefined" && module.exports) { // eslint-disable-line no-undef
+  module.exports = { // eslint-disable-line no-undef
     renderOverviewCards,
     renderHealthPanel,
     renderTimeline,

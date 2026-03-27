@@ -84,7 +84,7 @@ function flatQuery(root, sel) {
 
 function matchesSelector(el, sel) {
   if (!el || typeof el.className !== "string") return false;
-  const parts = sel.split(/(?=[.#\[])/);
+  const parts = sel.split(/(?=[.#[])/);
   for (const part of parts) {
     if (part.startsWith(".")) {
       const cls = part.slice(1).replace(/\\\//g, "/");

@@ -29,6 +29,38 @@ export default [
     }
   },
   {
+    files: ["assets/**/*.js"],
+    languageOptions: {
+      globals: {
+        document:              "readonly",
+        window:                "readonly",
+        sessionStorage:        "readonly",
+        localStorage:          "readonly",
+        navigator:             "readonly",
+        Node:                  "readonly",
+        location:              "readonly",
+        history:               "readonly",
+        HTMLElement:            "readonly",
+        customElements:        "readonly",
+        Event:                 "readonly",
+        CustomEvent:           "readonly",
+        MutationObserver:      "readonly",
+        IntersectionObserver:  "readonly",
+        requestAnimationFrame: "readonly",
+        cancelAnimationFrame:  "readonly",
+        getComputedStyle:      "readonly",
+        DOMParser:             "readonly",
+        XMLSerializer:         "readonly",
+        btoa:                  "readonly",
+        atob:                  "readonly",
+        self:                  "readonly",
+        confirm:               "readonly",
+        alert:                 "readonly",
+        prompt:                "readonly",
+      }
+    }
+  },
+  {
     files: ["tests/**/*.test.js"],
     languageOptions: {
       globals: {
@@ -41,6 +73,7 @@ export default [
         beforeEach: "readonly",
         afterEach:  "readonly",
         jest:       "readonly",
+        module:     "readonly",
       }
     }
   }
