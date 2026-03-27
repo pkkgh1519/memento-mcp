@@ -242,16 +242,22 @@ OAuth 2.0 endpoints: `GET /.well-known/oauth-authorization-server`, `GET /.well-
 | `migration-013-search-events.sql` | Schema migration: creates `search_events` table for search query and result observability. |
 | `migration-007-flexible-embedding-dims.js` | Schema migration script: converts the `embedding` column to `halfvec(N)` for models with >2000 dimensions (pgvector ≥0.7.0 required). Run with `EMBEDDING_DIMENSIONS=<N>`. |
 | `backfill-embeddings.js` | One-time script to regenerate embeddings for all fragments lacking them; use after a provider or dimension change. |
+| `migrate.js` | DB migration runner with transaction safety and `schema_migrations` tracking. Run via `npm run migrate`. |
 
 **Admin module:**
 
 | Module | Responsibility |
 |--------|----------------|
 | `lib/admin/ApiKeyStore.js` | API key CRUD operations and authentication verification. SHA-256 hash-only storage; raw key returned once at creation. |
-| `lib/admin/admin-routes.js` | Admin REST endpoint handlers (stats, activity, keys, groups, memory operations) and static asset serving. Extracted from `server.js` for separation of concerns. |
+| `lib/admin/admin-auth.js` | Admin authentication routes (POST /auth, session cookie issuance) |
+| `lib/admin/admin-keys.js` | API key management routes |
+| `lib/admin/admin-memory.js` | Memory operations routes (overview, fragments, anomalies, graph) |
+| `lib/admin/admin-sessions.js` | Session management routes |
+| `lib/admin/admin-logs.js` | Log viewer routes |
+| `lib/admin/admin-export.js` | Fragment export/import routes |
 | `assets/admin/index.html` | Admin SPA app shell (login form + container). |
 | `assets/admin/admin.css` | Admin UI stylesheet. |
-| `assets/admin/admin.js` | Admin UI logic with 6 navigation areas: Overview, API Keys, Groups, Memory Operations, Sessions (scaffold), Logs (scaffold). |
+| `assets/admin/admin.js` | Admin UI logic with 7 navigation areas: Overview, API Keys, Groups, Memory Operations, Sessions, Logs, Knowledge Graph. |
 
 Supporting infrastructure modules:
 
@@ -267,6 +273,7 @@ Supporting infrastructure modules:
 | `lib/metrics.js` | Prometheus metric collectors (`prom-client`) |
 | `lib/logger.js` | Winston structured logger with daily log rotation |
 | `lib/rate-limiter.js` | IP-based sliding window rate limiter |
+| `lib/rbac.js` | RBAC permission enforcement (read/write/admin tool-level permissions) |
 | `lib/utils.js` | Origin validation, JSON body parsing (2MB limit), SSE framing |
 | `lib/http-handlers.js` | HTTP request handlers for MCP and operational endpoints (health, metrics, OAuth, SSE); excludes Admin routes |
 | `lib/scheduler.js` | Periodic task scheduler (manages all setInterval jobs after server start) |
@@ -447,11 +454,11 @@ The isolation context is set per-transaction via `SET LOCAL app.current_agent_id
 
 The `key_id` column provides an additional isolation layer orthogonal to the agent-level RLS policy. Fragments stored via the master key (`MEMENTO_ACCESS_KEY`) carry `key_id = NULL` and are accessible only to master key requests. Fragments stored by a provisioned DB API key carry `key_id = <key UUID>` and are visible only to requests authenticated with that specific key.
 
-This model enables per-key memory partitioning in multi-tenant or multi-agent deployments. API keys are provisioned and managed through the Admin SPA at `/v1/internal/model/nothing`. The SPA shell (HTML and images) is served without authentication to allow the login form to render; all data API endpoints under the same prefix require master key authentication via Authorization Bearer header or `?key=` query parameter. The raw key (`mmcp_<slug>_<32 hex chars>`) is returned exactly once on creation and is never stored; the database retains only the SHA-256 hash. Key status, daily rate limits, and usage statistics are tracked in the `api_keys` and `api_key_usage` tables created by migration-003.
+This model enables per-key memory partitioning in multi-tenant or multi-agent deployments. API keys are provisioned and managed through the Admin SPA at `/v1/internal/model/nothing`. The SPA shell (HTML and images) is served without authentication to allow the login form to render; all data API endpoints under the same prefix require master key authentication via Authorization Bearer header. On successful POST /auth, an HttpOnly session cookie is issued and automatically attached to subsequent requests. The raw key (`mmcp_<slug>_<32 hex chars>`) is returned exactly once on creation and is never stored; the database retains only the SHA-256 hash. Key status, daily rate limits, and usage statistics are tracked in the `api_keys` and `api_key_usage` tables created by migration-003.
 
 ### Admin Console Architecture
 
-The Admin UI uses an app shell architecture (`assets/admin/index.html` + `admin.css` + `admin.js`). Six navigation areas:
+The Admin UI uses an app shell architecture (`assets/admin/index.html` + `admin.css` + `admin.js`). Seven navigation areas:
 
 | Area | Description | Status |
 |------|-------------|--------|
@@ -461,6 +468,7 @@ The Admin UI uses an app shell architecture (`assets/admin/index.html` + `admin.
 | Memory Operations | Fragment search/filter, anomaly detection, search observability | Implemented |
 | Sessions | Session list, detail view, activity tracking, manual reflect, termination, expired cleanup, bulk reflect unreflected | Implemented |
 | Logs | Log file list, content viewer (reverse-read tail), level/search filter, statistics | Implemented |
+| Knowledge Graph | Fragment relationship visualization (D3.js force-directed), topic filter, node detail | Implemented |
 
 For screen layout and usage instructions, see [Admin Console Guide](docs/admin-console-guide.md).
 
@@ -837,6 +845,7 @@ Records a utility assessment for a previously executed tool invocation.
 | `tool_name` | string | Y | Identifier of the evaluated tool |
 | `relevant` | boolean | Y | Whether results were pertinent to the stated intent |
 | `sufficient` | boolean | Y | Whether results were adequate for task completion |
+| `fragment_ids` | string[] | | Pass recall result fragment IDs to adjust their activation scores (relevant=true: +0.1, false: -0.15) |
 | `suggestion` | string | | Improvement suggestion. ≤100 characters recommended |
 | `context` | string | | Usage context summary. ≤50 characters recommended |
 | `session_id` | string | | Session identifier |
@@ -1070,7 +1079,14 @@ export const MEMORY_CONFIG = {
     k             : 60,   // RRF denominator constant. Higher k reduces top-rank dominance.
     l1WeightFactor: 2.0   // Multiplier applied to L1 Redis results for priority injection.
   },
-  linkedFragmentLimit: 10  // Max linked neighbors returned per recall
+  linkedFragmentLimit: 10,  // Max linked neighbors returned per recall
+  temperatureBoost: {
+    warmWindowDays     : 7,    // Fragments accessed within this window receive warmBoost
+    warmBoost          : 0.2,  // Score bonus for recently accessed fragments
+    highAccessBoost    : 0.15, // Score bonus for fragments exceeding access threshold
+    highAccessThreshold: 5,    // Minimum access count to qualify for highAccessBoost
+    learningBoost      : 0.3   // Score bonus for learning_extraction fragments
+  }
 };
 ```
 
@@ -1089,6 +1105,7 @@ export const MEMORY_CONFIG = {
 | `ALLOWED_ORIGINS` | (empty) | Comma-separated allowed Origin values. All origins permitted when empty. |
 | `RATE_LIMIT_WINDOW_MS` | `60000` | Rate limiting window size in milliseconds |
 | `RATE_LIMIT_MAX_REQUESTS` | `120` | Maximum requests per IP within the window |
+| `EVALUATOR_MAX_QUEUE` | `100` | MemoryEvaluator queue size cap (oldest jobs dropped when exceeded) |
 | `OAUTH_ALLOWED_REDIRECT_URIS` | (empty) | OAuth redirect_uri allowed prefixes (comma-separated). When unset, only localhost redirect URIs are permitted. |
 
 #### PostgreSQL
@@ -1481,6 +1498,10 @@ EMBEDDING_DIMENSIONS=768
 
 See **[INSTALL.en.md](docs/INSTALL.en.md)** for full installation, migration, client configuration, and hook setup instructions.
 
+```bash
+npm run migrate    # DB migration (incremental, schema_migrations table tracking)
+```
+
 ---
 
 ## 12. Endpoint Reference
@@ -1526,6 +1547,9 @@ See **[INSTALL.en.md](docs/INSTALL.en.md)** for full installation, migration, cl
 | `GET` | `/v1/internal/model/nothing/logs/files` | Log file list with sizes |
 | `GET` | `/v1/internal/model/nothing/logs/read` | Parsed log content (file, tail, level, search parameters) |
 | `GET` | `/v1/internal/model/nothing/logs/stats` | Log statistics (level counts, recent errors, disk usage) |
+| `GET` | `/v1/internal/model/nothing/memory/graph?topic=&limit=` | Knowledge graph data (nodes + edges) |
+| `GET` | `/v1/internal/model/nothing/export?key_id=&topic=` | Fragment JSON Lines stream export |
+| `POST` | `/v1/internal/model/nothing/import` | Fragment JSON array import |
 
 ### /health Endpoint Policy
 

@@ -1,5 +1,41 @@
 # Changelog
 
+## [1.8.0] - 2026-03-28
+
+### Added
+- RBAC: tool-level permission enforcement (read/write/admin) via lib/rbac.js
+- Fragment import/export API: GET /export (JSON Lines stream), POST /import
+- Knowledge graph visualization: GET /memory/graph API + D3.js force-directed Admin tab
+- Search quality dashboard: path distribution, latency percentiles (p50/p90/p99), top keywords, zero-result rate
+- DB migration runner: scripts/migrate.js with transaction safety and schema_migrations tracking
+- MemoryManager.create() static factory for dependency injection in tests
+- MemoryEvaluator backpressure: queue size cap (EVALUATOR_MAX_QUEUE env, default 100)
+- Sentiment-aware decay: tool_feedback fragment_ids parameter adjusts ema_activation
+- Closed learning loop: searchPath tracking in SessionActivityTracker, learning extraction in AutoReflect, context() priority injection for learning fragments
+- Temperature-weighted context sorting: warm window + access count + learning source boost
+- FragmentReader.searchBySource() for source-based fragment queries
+
+### Changed
+- Admin routes split into 5 focused modules (admin-auth, admin-keys, admin-memory, admin-sessions, admin-logs)
+- Admin authentication: QS ?key= replaced with opaque session token cookie (HttpOnly, SameSite=Strict)
+- Gemini API key moved from URL query parameter to x-goog-api-key header
+- ESLint config: browser globals added for assets/**/*.js
+- Jest/node:test boundary: tests/unit/ excluded from Jest (node:test only), tests/*.test.js for Jest
+- context() extras sorting uses temperature score (importance + warm boost + access count + learning boost)
+- config/memory.js: added temperatureBoost, learning typeSlot
+
+### Fixed
+- npm audit vulnerabilities (flatted, picomatch, brace-expansion)
+- ESLint 606 errors from missing browser globals
+- Jest 34/42 suite failures from node:test module resolution
+- Admin cookie auth: validateAdminAccess used instead of validateMasterKey in API dispatcher
+- Export query: nonexistent updated_at column replaced with accessed_at
+
+### Security
+- Admin QS key exposure eliminated (cookie-based session tokens)
+- Gemini API key no longer appears in URL query strings or logs
+- RBAC prevents read-only API keys from executing write operations
+
 ## [1.7.0] - 2026-03-26
 
 ### Added

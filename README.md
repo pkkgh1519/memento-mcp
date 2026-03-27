@@ -207,13 +207,19 @@ lib/
 ├── metrics.js         Prometheus 메트릭 수집 (prom-client)
 ├── logger.js          Winston 로거 (daily rotate)
 ├── rate-limiter.js    IP 기반 sliding window rate limiter
+├── rbac.js            RBAC 권한 검사 (read/write/admin 도구 레벨 권한 적용)
 ├── http-handlers.js   MCP/SSE HTTP 핸들러 (Admin 라우트는 admin-routes.js로 분리)
 ├── scheduler.js       주기 작업 스케줄러 (setInterval 작업 관리)
 └── utils.js           Origin 검증, JSON 바디 파싱(2MB 상한), SSE 출력
 
 lib/admin/
 ├── ApiKeyStore.js     API 키 CRUD, 그룹 CRUD, 인증 검증 (SHA-256 해시 저장, 원시 키 단 1회 반환)
-└── admin-routes.js    Admin REST API 라우트 + 정적 파일 서빙 (그룹 관리, 메모리 운영, 인증 게이트)
+├── admin-auth.js      Admin 인증 라우트 (POST /auth, 세션 쿠키 발급)
+├── admin-keys.js      API 키 관리 라우트
+├── admin-memory.js    메모리 운영 라우트 (overview, fragments, anomalies, graph)
+├── admin-sessions.js  세션 관리 라우트
+├── admin-logs.js      로그 조회 라우트
+└── admin-export.js    파편 내보내기/가져오기 라우트 (export, import)
 
 assets/admin/
 ├── index.html         Admin SPA app shell (로그인 폼 + 컨테이너)
@@ -248,6 +254,7 @@ lib/tools/
 scripts/
 ├── backfill-embeddings.js                       임베딩 소급 처리 (1회성)
 ├── normalize-vectors.js                         벡터 L2 정규화 (1회성)
+├── migrate.js                                   DB 마이그레이션 러너 (schema_migrations 기반 증분 적용)
 └── migration-007-flexible-embedding-dims.js     임베딩 차원 마이그레이션
 ```
 
@@ -428,11 +435,11 @@ CREATE POLICY fragment_isolation_policy ON agent_memory.fragments
 
 이 격리 모델은 다중 에이전트 환경에서 키 단위 메모리 파티셔닝을 구현한다. API 키는 Admin SPA(`/v1/internal/model/nothing`)에서 관리하며, 생성 시 원시 키(`mmcp_<slug>_<32 hex>`)는 응답에서 단 1회만 반환되고 DB에는 SHA-256 해시만 저장된다.
 
-Admin UI(`/v1/internal/model/nothing`)는 마스터 키 인증이 필요하다. Authorization Bearer 헤더 또는 `?key=` 쿼리 파라미터로 인증한다.
+Admin UI(`/v1/internal/model/nothing`)는 마스터 키 인증이 필요하다. Authorization Bearer 헤더로 인증한다. POST /auth 성공 시 HttpOnly 세션 쿠키가 발급되어 이후 요청에 자동 첨부된다.
 
 ### Admin 콘솔 구조
 
-Admin UI는 app shell 아키텍처로 구성된다 (`assets/admin/index.html` + `assets/admin/admin.css` + `assets/admin/admin.js`). 6개 내비게이션 영역으로 나뉜다:
+Admin UI는 app shell 아키텍처로 구성된다 (`assets/admin/index.html` + `assets/admin/admin.css` + `assets/admin/admin.js`). 7개 내비게이션 영역으로 나뉜다:
 
 | 영역 | 설명 | 상태 |
 |------|------|------|
@@ -442,6 +449,7 @@ Admin UI는 app shell 아키텍처로 구성된다 (`assets/admin/index.html` + 
 | 메모리 운영 | 파편 검색/필터, 이상 탐지, 검색 관측성 | 구현 완료 |
 | 세션 | 세션 목록, 상세 조회, 활동 추적, 수동 reflect, 종료, 만료 정리, 미반영 일괄 reflect | 구현 완료 |
 | 로그 | 로그 파일 목록, 내용 조회(역순 tail), 레벨/검색 필터, 통계 | 구현 완료 |
+| 지식 그래프 | 파편 관계 시각화 (D3.js force-directed), 토픽 필터, 노드 상세 | 구현 완료 |
 
 각 탭의 화면 구성과 조작 방법은 [관리자 콘솔 사용 안내](docs/admin-console-guide.md)를 참고한다.
 
@@ -696,6 +704,7 @@ sessionId를 전달하면 해당 세션의 기존 파편(Redis frag:sess, Workin
 | tool_name | string | Y | 평가 대상 도구명 |
 | relevant | boolean | Y | 결과가 요청 의도와 관련 있었는가 |
 | sufficient | boolean | Y | 결과가 작업 완료에 충분했는가 |
+| fragment_ids | string[] | | recall 결과의 파편 ID를 전달하면 해당 파편의 활성화 점수가 피드백에 따라 조정된다 (relevant=true 시 +0.1, false 시 -0.15) |
 | suggestion | string | | 개선 제안. 100자 이내 권장 |
 | context | string | | 사용 맥락 요약. 50자 이내 권장 |
 | session_id | string | | 세션 ID |
@@ -909,6 +918,13 @@ export const MEMORY_CONFIG = {
   semanticSearch: {
     minSimilarity: 0.2,          // L3 pgvector 검색 최소 유사도 (기본 0.2)
     limit        : 10            // L3 반환 최대 건수
+  },
+  temperatureBoost: {
+    warmWindowDays     : 7,      // 이 기간 내 접근 파편에 warmBoost 적용
+    warmBoost          : 0.2,    // 최근 접근 파편 점수 가산
+    highAccessBoost    : 0.15,   // 접근 횟수 임계 초과 파편 점수 가산
+    highAccessThreshold: 5,      // highAccessBoost 적용 기준 접근 횟수
+    learningBoost      : 0.3    // learning_extraction 파편 점수 가산
   }
 };
 ```
@@ -931,6 +947,7 @@ importanceWeight + recencyWeight + semanticWeight의 합은 1.0이어야 한다.
 | RATE_LIMIT_WINDOW_MS | 60000 | Rate limiting 윈도우 크기 (ms) |
 | RATE_LIMIT_MAX_REQUESTS | 120 | 윈도우 내 IP당 최대 요청 수 |
 | CONSOLIDATE_INTERVAL_MS | 21600000 | 자동 유지보수(consolidate) 실행 간격 (ms). 기본 6시간 |
+| EVALUATOR_MAX_QUEUE | 100 | MemoryEvaluator 큐 크기 상한 (초과 시 오래된 작업 드롭) |
 | OAUTH_ALLOWED_REDIRECT_URIS | (없음) | OAuth redirect_uri 허용 prefix (쉼표 구분, 미설정 시 localhost만 허용) |
 
 ### PostgreSQL
@@ -1307,6 +1324,9 @@ EMBEDDING_DIMENSIONS=768
 | GET | /v1/internal/model/nothing/logs/files | 로그 파일 목록 (크기 포함) |
 | GET | /v1/internal/model/nothing/logs/read | 로그 내용 조회 (file, tail, level, search 파라미터) |
 | GET | /v1/internal/model/nothing/logs/stats | 로그 통계 (레벨별 카운트, 최근 에러, 디스크 사용량) |
+| GET | /v1/internal/model/nothing/memory/graph?topic=&limit= | 지식 그래프 데이터 (nodes + edges) |
+| GET | /v1/internal/model/nothing/export?key_id=&topic= | 파편 JSON Lines 스트림 내보내기 |
+| POST | /v1/internal/model/nothing/import | 파편 JSON 배열 가져오기 |
 
 ### /health 엔드포인트 정책
 
@@ -1340,7 +1360,7 @@ PostgreSQL만 있으면 핵심 기능이 동작한다. Redis를 추가하면 L1 
 
 ### 전체 테스트 (DB 불필요)
 ```bash
-npm test          # Jest + unit + integration 순차 실행
+npm test          # Jest (tests/*.test.js) + node:test (tests/unit/*.test.js) 순차 실행. tests/unit/은 node:test 전용이며 Jest에서 제외된다.
 ```
 
 개별 실행:
@@ -1372,6 +1392,10 @@ npm run test:ci          # npm test + test:e2e
 ## 설치
 
 설치, 마이그레이션, Claude Code 연결, 훅 설정은 **[INSTALL.md](docs/INSTALL.md)**를 참조한다.
+
+```bash
+npm run migrate    # DB 마이그레이션 (schema_migrations 테이블 기반 증분 적용)
+```
 
 ---
 
