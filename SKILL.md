@@ -38,6 +38,9 @@ Memento MCP는 MCP(Model Context Protocol) 기반의 장기 기억 서버다. AI
 | supersedes | string[] | - | 대체할 기존 파편 ID 목록. 지정된 파편은 valid_to 설정 + importance 반감. |
 | agentId | string | - | 에이전트 ID (RLS 격리용) |
 
+품질 게이트: content < 10자 AND 단어 < 3개, URL만, type+topic null인 경우 거부됨.
+importance < 0.3이면 경고 반환 + TTL short 자동 설정.
+
 반환: `{ id, keywords, ttl_tier, scope, conflicts }`
 
 사용 시점:
@@ -65,6 +68,7 @@ Memento MCP는 MCP(Model Context Protocol) 기반의 장기 기억 서버다. AI
 | threshold | number | - | similarity 임계값 0~1. 미만인 파편은 제외. L1/L2 결과는 필터링 안 함. |
 | includeSuperseded | boolean | - | true면 superseded_by로 만료된 파편도 포함. 기본 false. |
 | asOf | string | - | ISO 8601. 특정 시점 기준 유효 파편만 반환. 미지정 시 현재 유효 파편. |
+| timeRange | object | - | 시간 범위 필터. {from: "2026-03-15", to: "2026-03-16"} ISO 8601. |
 | cursor | string | - | 페이지네이션 커서. 이전 결과의 nextCursor 값. |
 | pageSize | number | - | 페이지 크기. 기본 20, 최대 50. |
 | excludeSeen | boolean | - | true(기본값) 시 이전 context() 호출에서 이미 주입된 파편 제외. |
@@ -173,6 +177,7 @@ Memento MCP는 MCP(Model Context Protocol) 기반의 장기 기억 서버다. AI
 | tokenBudget | number | - | 최대 토큰 수. 기본 2000. |
 | types | string[] | - | 로드할 유형 목록. 기본: preference, error, procedure |
 | sessionId | string | - | 세션 ID. Working Memory 로드용. |
+| structured | boolean | - | true 시 계층적 트리 구조 반환 (core/working/anchors/learning). 기본값 false. |
 | agentId | string | - | 에이전트 ID. |
 
 반환: `{ core_memory: [...], working_memory: [...], system_hints: [...] }`
