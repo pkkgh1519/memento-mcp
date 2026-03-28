@@ -5,6 +5,9 @@
   "description": "Fragment-Based Memory MCP Server",
   "main": "server.js",
   "type": "module",
+  "bin": {
+    "memento-mcp": "bin/memento.js"
+  },
   "scripts": {
     "start": "node server.js",
     "test": "npm run test:jest && npm run test:unit:node",
@@ -16,7 +19,8 @@
     "test:ci": "npm test && npm run test:e2e",
     "lint": "eslint . --max-warnings 0",
     "backfill:embeddings": "node scripts/backfill-embeddings.js",
-    "migrate": "node scripts/migrate.js"
+    "migrate": "node scripts/migrate.js",
+    "cli": "node bin/memento.js"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
