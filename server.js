@@ -55,7 +55,8 @@ import {
   handleAdminUi,
   handleAdminImage,
   handleAdminStatic,
-  handleAdminApi
+  handleAdminApi,
+  getAllowedOrigin
 } from "./lib/http-handlers.js";
 
 /** Rate Limiter 인스턴스 */
@@ -170,7 +171,7 @@ const server = http.createServer(async (req, res) => {
   /* CORS Preflight */
   if (req.method === "OPTIONS") {
     res.statusCode = 204;
-    res.setHeader("Access-Control-Allow-Origin", req.headers.origin || "*");
+    res.setHeader("Access-Control-Allow-Origin", getAllowedOrigin(req));
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, MCP-Session-Id, memento-access-key");
     res.setHeader("Access-Control-Expose-Headers", "MCP-Session-Id");
