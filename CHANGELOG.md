@@ -1,6 +1,6 @@
 # Changelog
 
-## [2.0.1] - 2026-03-29
+## [2.1.0] - 2026-03-29
 
 ### Added
 - Episodic memory: episode type (1000자, 서사/맥락 기억), context_summary 선택 필드
