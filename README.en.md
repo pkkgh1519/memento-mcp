@@ -115,6 +115,14 @@ Retrieval exceeds 80% recall on 5 of 6 question types. However, a significant ga
 
 See [Benchmark Report](docs/benchmark.en.md) for the full analysis.
 
+## Usage Patterns
+
+Memento is optimized for fact caching. When narrative context matters:
+
+- Use the `episode` type to store narratives that preserve "why" behind decisions
+- Add `contextSummary` when storing facts to get context alongside recall results
+- A dual-memory setup works well: fact retrieval via Memento, context restoration via your main memory system (e.g., MEMORY.md)
+
 ## Who Is This For
 
 - Developers who use AI agents (Claude Code / Cursor / Windsurf) daily

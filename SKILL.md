@@ -28,7 +28,7 @@ Memento MCP는 MCP(Model Context Protocol) 기반의 장기 기억 서버다. AI
 |------|------|------|------|
 | content | string | O | 기억할 내용. 1~3문장, 300자 이내 권장. |
 | topic | string | O | 주제 라벨. 예: database, auth, deployment, security |
-| type | string | O | fact, decision, error, preference, procedure, relation |
+| type | string | O | fact, decision, error, preference, procedure, relation, episode -- episode: 서사/맥락 기억. 전후관계와 이유를 포함하는 긴 문장 (1000자) |
 | keywords | string[] | - | 검색용 키워드. 미입력 시 자동 추출. 3~5개 권장. |
 | importance | number | - | 0.0~1.0. 미입력 시 type별 기본값 적용. |
 | source | string | - | 출처 (세션 ID, 도구명 등) |
@@ -36,6 +36,8 @@ Memento MCP는 MCP(Model Context Protocol) 기반의 장기 기억 서버다. AI
 | scope | string | - | permanent(기본) 또는 session. session은 세션 종료 시 소멸. |
 | isAnchor | boolean | - | true면 영구 보존. 중요도 감쇠/만료 삭제 대상 제외. 핵심 규칙/정책용. |
 | supersedes | string[] | - | 대체할 기존 파편 ID 목록. 지정된 파편은 valid_to 설정 + importance 반감. |
+| contextSummary | string | - | 이 기억이 생긴 맥락/배경 요약 (1-2문장) |
+| sessionId | string | - | 현재 세션 ID |
 | agentId | string | - | 에이전트 ID (RLS 격리용) |
 
 품질 게이트: content < 10자 AND 단어 < 3개, URL만, type+topic null인 경우 거부됨.
@@ -72,6 +74,7 @@ importance < 0.3이면 경고 반환 + TTL short 자동 설정.
 | cursor | string | - | 페이지네이션 커서. 이전 결과의 nextCursor 값. |
 | pageSize | number | - | 페이지 크기. 기본 20, 최대 50. |
 | excludeSeen | boolean | - | true(기본값) 시 이전 context() 호출에서 이미 주입된 파편 제외. |
+| includeContext | boolean | - | true이면 context_summary와 시간 인접 파편을 함께 반환 |
 | agentId | string | - | 에이전트 ID. |
 
 반환: `{ fragments: [{ id, content, topic, type, importance, similarity?, stale_warning? }], count, totalTokens, searchPath, _searchEventId }`
