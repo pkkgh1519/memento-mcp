@@ -17,8 +17,12 @@ if (!DB_URL) {
 }
 
 async function migrate() {
-  const pool = new pg.Pool({ connectionString: DB_URL });
-  const client = await pool.connect();
+  const pool   = new pg.Pool({ connectionString: DB_URL });
+  const client  = await pool.connect();
+
+  const MIGRATE_LOCK_ID = 73657;
+  await client.query(`SELECT pg_advisory_lock(${MIGRATE_LOCK_ID})`);
+  console.log("Migration lock acquired");
 
   try {
     await client.query(`
@@ -41,8 +45,6 @@ async function migrate() {
 
     if (pending.length === 0) {
       console.log("All migrations already applied.");
-      await client.release();
-      await pool.end();
       return;
     }
 
@@ -70,6 +72,8 @@ async function migrate() {
 
     console.log(`${pending.length} migration(s) applied successfully.`);
   } finally {
+    await client.query(`SELECT pg_advisory_unlock(${MIGRATE_LOCK_ID})`);
+    console.log("Migration lock released");
     client.release();
     await pool.end();
   }

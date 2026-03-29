@@ -98,7 +98,7 @@ function renderView() {
   }
 }
 
-function renderScaffold(container, viewId) {
+function renderScaffold(container, viewId) { // eslint-disable-line no-unused-vars
   container.textContent = "";
   const wrap = document.createElement("div");
   wrap.className = "space-y-6";
@@ -401,7 +401,7 @@ function renderSidebar() {
    8. Command Bar (Stitch: bg-slate-950/60, PRODUCTION badge, status)
    ================================================================ */
 
-const VIEW_TITLES = {
+const VIEW_TITLES = { // eslint-disable-line no-unused-vars
   overview: "Operations Overview",
   keys:     "API Key Management",
   groups:   "Group Management",
@@ -496,7 +496,6 @@ function renderCommandBar() {
 function renderOverviewCards(stats) {
   if (!stats) return loadingHtml();
 
-  const queues = stats.queues ?? {};
   const cards  = [
     { label: "총 파편 수",    value: fmt(stats.fragments),             icon: "database" },
     { label: "활성 세션",     value: fmt(stats.sessions),              icon: "groups" },

@@ -92,7 +92,7 @@ async function routeSessionApi(req, res, {
       await cleanupExpiredSessionsFn();
       res.statusCode = 200;
       res.end(JSON.stringify({ ok: true, message: "Cleanup completed" }));
-    } catch (err) {
+    } catch (_err) {
       res.statusCode = 500;
       res.end(JSON.stringify({ error: "Internal error" }));
     }
@@ -110,7 +110,7 @@ async function routeSessionApi(req, res, {
       await markReflectedFn(sessionId);
       res.statusCode = 200;
       res.end(JSON.stringify({ ok: true }));
-    } catch (err) {
+    } catch (_err) {
       res.statusCode = 500;
       res.end(JSON.stringify({ error: "Internal error" }));
     }
@@ -162,7 +162,7 @@ async function routeSessionApi(req, res, {
         searchEvents:   searchEventsR.rows,
         toolFeedback:   toolFeedbackR.rows
       }));
-    } catch (err) {
+    } catch (_err) {
       res.statusCode = 500;
       res.end(JSON.stringify({ error: "Internal error" }));
     }
@@ -186,7 +186,7 @@ async function routeSessionApi(req, res, {
       await deleteActivityFn(sessionId);
       res.statusCode = 200;
       res.end(JSON.stringify({ ok: true }));
-    } catch (err) {
+    } catch (_err) {
       res.statusCode = 500;
       res.end(JSON.stringify({ error: "Internal error" }));
     }
@@ -242,7 +242,7 @@ async function routeSessionApi(req, res, {
           unreflected: unreflected.length
         }
       }));
-    } catch (err) {
+    } catch (_err) {
       res.statusCode = 500;
       res.end(JSON.stringify({ error: "Internal error" }));
     }

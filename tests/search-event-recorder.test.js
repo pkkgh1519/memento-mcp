@@ -12,7 +12,7 @@ import {
   classifyQueryType,
   extractFilterKeys,
   buildSearchEvent
-} from "../../lib/memory/SearchEventRecorder.js";
+} from "../lib/memory/SearchEventRecorder.js";
 
 // ---------------------------------------------------------------------------
 // classifyQueryType

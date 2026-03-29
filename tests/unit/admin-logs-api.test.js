@@ -8,12 +8,11 @@
  * 실제 파일시스템에 임시 로그 파일을 생성하여 통합 수준 단위 테스트 수행.
  */
 
-import { describe, it, before, after } from "node:test";
+import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { Readable } from "node:stream";
 
 const ADMIN_BASE = "/v1/internal/model/nothing";
 

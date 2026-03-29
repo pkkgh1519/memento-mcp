@@ -10,7 +10,7 @@
  * DB는 mock 처리하여 순수 라우팅 로직만 테스트.
  */
 
-import { describe, it, beforeEach, afterEach, mock } from "node:test";
+import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 /* ------------------------------------------------------------------ */
@@ -21,8 +21,8 @@ import assert from "node:assert/strict";
 let queryResults = [];
 let queryIndex   = 0;
 
-const mockPool = {
-  query(sql, params) {
+const mockPool = { // eslint-disable-line no-unused-vars
+  query(_sql, _params) {
     const result = queryResults[queryIndex] ?? { rows: [] };
     queryIndex++;
     return Promise.resolve(result);
@@ -33,10 +33,10 @@ const mockPool = {
  * DB mock: getPrimaryPool이 mockPool을 반환하도록 설정.
  * admin-routes.js가 import하는 ../tools/db.js를 가로챈다.
  */
-const originalModule = await import("../../lib/tools/db.js");
+const _originalModule = await import("../../lib/tools/db.js");
 
 /** SearchMetrics mock */
-const mockSearchMetrics = {
+const _mockSearchMetrics = {
   async getStats() {
     return {
       L1:    { p50: 2.1, p90: 5.3, p99: 12.0, count: 50 },
@@ -53,7 +53,7 @@ const mockSearchMetrics = {
 
 const ADMIN_BASE = "/v1/internal/model/nothing";
 
-function fakeRes() {
+function fakeRes() { // eslint-disable-line no-unused-vars
   const _headers = {};
   const res = {
     statusCode: 0,
@@ -66,7 +66,7 @@ function fakeRes() {
   return res;
 }
 
-function fakeReq(method, pathname, headers = {}) {
+function fakeReq(method, pathname, headers = {}) { // eslint-disable-line no-unused-vars
   return {
     method,
     url: `http://localhost${pathname}`,
@@ -77,7 +77,7 @@ function fakeReq(method, pathname, headers = {}) {
   };
 }
 
-function parseBody(res) {
+function parseBody(res) { // eslint-disable-line no-unused-vars
   return JSON.parse(res._body);
 }
 

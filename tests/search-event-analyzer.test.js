@@ -8,7 +8,7 @@
  * 작성일: 2026-03-25
  */
 
-import { computeL1MissRate, computeFilterDistribution } from "../../lib/memory/SearchEventAnalyzer.js";
+import { computeL1MissRate, computeFilterDistribution } from "../lib/memory/SearchEventAnalyzer.js";
 
 /* ─────────────────────────────────────────────────────────────────────────── */
 /*  computeL1MissRate                                                           */

@@ -24,7 +24,7 @@ export default [
       }
     },
     rules: {
-      "no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
+      "no-unused-vars": ["warn", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_", "caughtErrorsIgnorePattern": "^_" }],
       "no-undef": "error"
     }
   },
@@ -57,6 +57,7 @@ export default [
         confirm:               "readonly",
         alert:                 "readonly",
         prompt:                "readonly",
+        d3:                    "readonly",
       }
     }
   },
