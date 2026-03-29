@@ -111,7 +111,7 @@ Performance on [LongMemEval-S](https://arxiv.org/abs/2407.15460) (500 questions)
 | QA accuracy | 45.4% | with temporal metadata (baseline 40.4%) |
 | Fragment throughput | 89,006 / 27s | full ingestion-embedding-retrieval pipeline |
 
-Retrieval exceeds 80% recall on 5 of 6 question types. The sole weak spot is assistant-utterance queries (53.6%), caused by a mismatch between storage format and query semantics.
+Retrieval exceeds 80% recall on 5 of 6 question types. However, a significant gap exists between retrieval recall (88.3%) and QA accuracy (45.4%). This reflects reader-stage limitations in synthesizing answers from retrieved fragments, particularly for multi-session and temporal reasoning questions.
 
 See [Benchmark Report](docs/benchmark.en.md) for the full analysis.
 
@@ -135,6 +135,12 @@ See [Benchmark Report](docs/benchmark.en.md) for the full analysis.
 | [SKILL.md](SKILL.md) | Full MCP tool reference |
 | [INSTALL.md](docs/INSTALL.en.md) | Migrations, hook setup, detailed installation |
 | [CHANGELOG](CHANGELOG.md) | Version history |
+
+## Known Limitations
+
+- L1 Redis cache supports API key-based isolation only. Agent-level isolation in multi-agent deployments is enforced at L2/L3.
+- Automatic quality evaluation targets decision, preference, and relation types only. fact, procedure, and error types are excluded from the evaluation queue.
+- Authentication is disabled when MEMENTO_ACCESS_KEY is not set. Always configure it for externally exposed deployments.
 
 ## Tech Stack
 

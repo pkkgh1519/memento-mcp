@@ -73,19 +73,13 @@ PowerShell 환경이라면 [Windows PowerShell Setup](windows-powershell.md)의 
 CREATE EXTENSION IF NOT EXISTS vector;
 ```
 
-그 다음 schema를 적용한다.
+그 다음 마이그레이션을 실행한다.
 
 ```bash
-psql "$DATABASE_URL" -f lib/memory/memory-schema.sql
+npm run migrate
 ```
 
-기존 설치를 업그레이드하는 경우:
-
-```bash
-DATABASE_URL="$DATABASE_URL" npm run migrate
-```
-
-또는 수동으로 개별 마이그레이션을 실행하려면 [INSTALL.md](../INSTALL.md)를 참조한다.
+수동으로 개별 마이그레이션을 실행하려면 [INSTALL.md](../INSTALL.md)를 참조한다.
 
 ## 6. 서버 실행
 

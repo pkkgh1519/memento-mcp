@@ -6,7 +6,7 @@ When the server starts, the MemoryEvaluator worker runs in the background. It is
 
 The worker polls the Redis queue `memory_evaluation` every 5 seconds. It waits when the queue is empty. When a job is dequeued, it calls Gemini CLI (`geminiCLIJson`) to evaluate the fragment content's soundness. Evaluation results are used to update the utility_score and verified_at in the fragments table.
 
-New fragments are automatically enqueued for evaluation when stored via remember. Evaluation is decoupled from storage, so it does not affect remember call response time.
+New fragments are enqueued for evaluation when stored via remember. However, fact, procedure, and error types are excluded. Only decision, preference, and relation types are evaluated. Evaluation is decoupled from storage, so it does not affect remember call response time.
 
 In environments where Gemini CLI is not installed, the worker starts but skips evaluation tasks.
 
