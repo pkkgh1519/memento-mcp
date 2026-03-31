@@ -51,6 +51,7 @@ server.js  (HTTP 서버)
             ├── LinkedFragmentLoader.js   연결 파편 일괄 로드 (1-hop 이웃 배치 조회)
             ├── GraphNeighborSearch.js    L2.5 그래프 이웃 검색 (fragment_links 1-hop, RRF 1.5x 가중)
             ├── EvaluationMetrics.js      tool_feedback 기반 implicit Precision@5 및 downstream task 성공률 계산
+            ├── MorphemeIndex.js          형태소 기반 L3 폴백 인덱스
             ├── memory-schema.sql         PostgreSQL 스키마 정의
             ├── migration-001-temporal.sql Temporal 스키마 마이그레이션 (valid_from/to/superseded_by)
             ├── migration-002-decay.sql   감쇠 멱등성 마이그레이션 (last_decay_at)
@@ -65,8 +66,13 @@ server.js  (HTTP 서버)
             ├── migration-011-key-groups.sql  API 키 그룹 N:M 매핑 (api_key_groups, api_key_group_members)
             ├── migration-012-quality-verified.sql fragments.quality_verified 컬럼 추가 (MemoryEvaluator 판정 결과 영속화)
             ├── migration-013-search-events.sql search_events 테이블 생성 (검색 쿼리/결과 관측성)
-            ├── migration-014-dedup-compress.sql  시맨틱 중복 제거 및 기억 압축 지원 컬럼/인덱스
-            └── migration-015-graph-neighbor.sql  graph neighbor 검색 최적화 인덱스 (fragment_links)
+            ├── migration-014-ttl-short.sql        단기 TTL 계층 지원 (ttl_short 정책)
+            ├── migration-015-created-at-index.sql created_at 단독 인덱스 추가 (정렬 최적화)
+            ├── migration-016-agent-topic-index.sql agent_id+topic 복합 인덱스
+            ├── migration-017-episodic.sql         episode 유형, context_summary, session_id 컬럼
+            ├── migration-018-fragment-quota.sql   api_keys.fragment_limit 컬럼 (파편 할당량)
+            ├── migration-019-hnsw-tuning.sql      HNSW ef_construction 64→128
+            └── migration-020-search-layer-latency.sql search_events 레이어별 레이턴시 컬럼
 ```
 
 지원 모듈:
@@ -86,6 +92,7 @@ lib/
 ├── rbac.js            RBAC 권한 검사 (read/write/admin 도구 레벨 권한 적용)
 ├── http-handlers.js   MCP/SSE HTTP 핸들러 (Admin 라우트는 admin-routes.js로 분리)
 ├── scheduler.js       주기 작업 스케줄러 (setInterval 작업 관리)
+├── scheduler-registry.js 스케줄러 작업 레지스트리 (작업별 성공/실패 추적)
 └── utils.js           Origin 검증, JSON 바디 파싱(2MB 상한), SSE 출력
 
 lib/admin/
@@ -100,7 +107,7 @@ lib/admin/
 assets/admin/
 ├── index.html         Admin SPA app shell (로그인 폼 + 컨테이너)
 ├── admin.css          Admin UI 스타일시트
-└── admin.js           Admin UI 로직 (6개 내비게이션: 개요, API 키, 그룹, 메모리 운영, 세션, 로그)
+└── admin.js           Admin UI 로직 (7개 내비게이션: 개요, API 키, 그룹, 메모리 운영, 세션, 로그, 지식 그래프)
 
 lib/http/
 └── helpers.js         HTTP SSE 스트림 헬퍼 및 요청 파싱 유틸리티
@@ -188,6 +195,8 @@ erDiagram
         float ema_activation "ACT-R EMA 활성화 근사값 (DEFAULT 0.0)"
         timestamptz ema_last_updated "EMA 마지막 갱신 시각"
         boolean quality_verified "MemoryEvaluator 판정: NULL=미평가, TRUE=keep, FALSE=downgrade/discard"
+        text context_summary "기억이 생긴 맥락/배경 요약 (episode에서 주로 사용)"
+        text session_id "파편이 생성된 세션 ID"
     }
     fragment_links {
         bigserial id PK
@@ -243,10 +252,12 @@ erDiagram
 | ema_activation | FLOAT | DEFAULT 0.0 | ACT-R 기저 활성화 EMA 근사값. `incrementAccess()` 호출 시 `α * (Δt_sec)^{-0.5} + (1-α) * prev` 수식으로 갱신(α=0.3). L1 fallback 경로에서는 갱신되지 않음(noEma=true). `_computeRankScore()`에서 importance 부스트로 활용 |
 | ema_last_updated | TIMESTAMPTZ | | EMA 마지막 갱신 시각. NULL이면 created_at 기준으로 보정 |
 | quality_verified | BOOLEAN | DEFAULT NULL | MemoryEvaluator 품질 판정 결과. NULL=미평가, TRUE=keep(검증됨), FALSE=downgrade/discard(부정). permanent 승격 Circuit Breaker에 사용됨 |
+| context_summary | TEXT | | 기억이 생긴 맥락/배경 요약 (episode에서 주로 사용) |
+| session_id | TEXT | | 파편이 생성된 세션 ID |
 
 인덱스 목록: content_hash(UNIQUE), topic(B-tree), type(B-tree), keywords(GIN), importance DESC(B-tree), created_at DESC(B-tree), agent_id(B-tree), linked_to(GIN), (ttl_tier, created_at)(B-tree), source(B-tree), verified_at(B-tree), is_anchor WHERE TRUE(부분 인덱스), valid_from(B-tree), (topic, type) WHERE valid_to IS NULL(부분 인덱스), id WHERE valid_to IS NULL(부분 UNIQUE).
 
-HNSW 벡터 인덱스는 `embedding IS NOT NULL` 조건부 인덱스로 생성된다. 파라미터: m=16(이웃 연결 수), ef_construction=64(인덱스 구축 탐색 깊이), 거리 함수 vector_cosine_ops.
+HNSW 벡터 인덱스는 `embedding IS NOT NULL` 조건부 인덱스로 생성된다. 파라미터: m=16(이웃 연결 수), ef_construction=128(인덱스 구축 탐색 깊이), 거리 함수 vector_cosine_ops. ef_search=80 (세션 레벨 SET LOCAL 적용).
 
 ### fragment_links
 

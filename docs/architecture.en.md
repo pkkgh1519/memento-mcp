@@ -48,6 +48,7 @@ server.js  (HTTP server)
             +-- SearchEventAnalyzer.js    Search event analysis, query pattern tracking (reads from SearchEventRecorder)
             +-- SearchEventRecorder.js    FragmentSearch.search() result to search_events table recording
             +-- EvaluationMetrics.js      tool_feedback-based implicit Precision@5 and downstream task success rate computation
+            +-- MorphemeIndex.js          Morpheme-based L3 fallback index
             +-- memory-schema.sql         PostgreSQL schema definition
             +-- migration-001-temporal.sql Temporal schema migration (valid_from/to/superseded_by)
             +-- migration-002-decay.sql   Decay idempotency migration (last_decay_at)
@@ -62,6 +63,13 @@ server.js  (HTTP server)
             +-- migration-011-key-groups.sql  API key group N:M mapping (api_key_groups, api_key_group_members)
             +-- migration-012-quality-verified.sql fragments.quality_verified column (MemoryEvaluator verdict persistence)
             +-- migration-013-search-events.sql search_events table (search query/result observability)
+            +-- migration-014-ttl-short.sql        Short TTL tier support (ttl_short policy)
+            +-- migration-015-created-at-index.sql Standalone created_at index (sort optimization)
+            +-- migration-016-agent-topic-index.sql agent_id+topic composite index
+            +-- migration-017-episodic.sql          episode type, context_summary, session_id columns
+            +-- migration-018-fragment-quota.sql    api_keys.fragment_limit column (fragment quota)
+            +-- migration-019-hnsw-tuning.sql       HNSW ef_construction 64→128
+            +-- migration-020-search-layer-latency.sql search_events per-layer latency columns
 ```
 
 Supporting modules:
@@ -81,6 +89,7 @@ lib/
 +-- rbac.js            RBAC authorization (read/write/admin tool-level permissions)
 +-- http-handlers.js   MCP/SSE HTTP handlers (Admin routes separated into admin-routes.js)
 +-- scheduler.js       Periodic task scheduler (setInterval task management)
++-- scheduler-registry.js Scheduler task registry (per-task success/failure tracking)
 +-- utils.js           Origin validation, JSON body parsing (2MB cap), SSE output
 
 lib/admin/
@@ -108,7 +117,7 @@ Tool implementations are separated into `lib/tools/`.
 
 ```
 lib/tools/
-+-- memory.js    12 MCP tool handlers
++-- memory.js    13 MCP tool handlers
 +-- memory-schemas.js  Tool schema definitions (inputSchema)
 +-- db.js        PostgreSQL connection pool, RLS-applied query helper (not exposed via MCP)
 +-- db-tools.js  MCP DB tool handlers (per-tool logic split from db.js)
@@ -127,6 +136,7 @@ scripts/
 +-- normalize-vectors.js                         Vector L2 normalization (one-time)
 +-- migrate.js                                   DB migration runner (schema_migrations-based incremental)
 +-- migration-007-flexible-embedding-dims.js     Embedding dimension migration
++-- cleanup-noise.js                             Bulk cleanup of low-quality/noise fragments (one-time)
 ```
 
 `config/memory.js` is a separate configuration file for the memory system. It holds time-semantic composite ranking weights, stale thresholds, embedding worker settings, context injection, pagination, and GC policies.
@@ -163,6 +173,8 @@ erDiagram
         float ema_activation "ACT-R EMA activation approximation (DEFAULT 0.0)"
         timestamptz ema_last_updated "EMA last update timestamp"
         boolean quality_verified "MemoryEvaluator verdict: NULL=unevaluated, TRUE=keep, FALSE=downgrade/discard"
+        text context_summary "Context/background summary of when the memory was created (primarily used in episodes)"
+        text session_id "Session ID in which the fragment was created"
     }
     fragment_links {
         bigserial id PK
@@ -218,10 +230,12 @@ The store for all fragments. This is the core table of the system.
 | ema_activation | FLOAT | DEFAULT 0.0 | ACT-R base-level activation EMA approximation. Updated on `incrementAccess()` via `alpha * (dt_sec)^{-0.5} + (1-alpha) * prev` (alpha=0.3). Not updated on L1 fallback path (noEma=true). Used as importance boost in `_computeRankScore()` |
 | ema_last_updated | TIMESTAMPTZ | | EMA last update timestamp. Falls back to created_at when NULL |
 | quality_verified | BOOLEAN | DEFAULT NULL | MemoryEvaluator quality verdict. NULL=unevaluated, TRUE=keep (verified), FALSE=downgrade/discard (rejected). Used in permanent promotion Circuit Breaker |
+| context_summary | TEXT | | Context/background summary of when the memory was created (primarily used in episodes) |
+| session_id | TEXT | | Session ID in which the fragment was created |
 
 Index list: content_hash (UNIQUE), topic (B-tree), type (B-tree), keywords (GIN), importance DESC (B-tree), created_at DESC (B-tree), agent_id (B-tree), linked_to (GIN), (ttl_tier, created_at) (B-tree), source (B-tree), verified_at (B-tree), is_anchor WHERE TRUE (partial index), valid_from (B-tree), (topic, type) WHERE valid_to IS NULL (partial index), id WHERE valid_to IS NULL (partial UNIQUE).
 
-The HNSW vector index is created as a conditional index on `embedding IS NOT NULL`. Parameters: m=16 (neighbor connections), ef_construction=64 (index build search depth), distance function vector_cosine_ops.
+The HNSW vector index is created as a conditional index on `embedding IS NOT NULL`. Parameters: m=16 (neighbor connections), ef_construction=128 (index build search depth), distance function vector_cosine_ops. ef_search=80 (applied via session-level SET LOCAL).
 
 ### fragment_links
 
