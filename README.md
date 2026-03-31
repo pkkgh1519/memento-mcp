@@ -60,6 +60,19 @@ node server.js
 
 다른 플랫폼 설정은 위 [호환 플랫폼](#호환-플랫폼) 테이블 참조.
 
+### 업데이트
+
+```bash
+cd ~/memento-mcp
+git pull origin main
+npm install
+npm run migrate
+# 서비스 재시작 (systemd / pm2 / docker 등 환경에 맞게)
+```
+
+- `npm run migrate`는 `.env`의 DB 설정을 자동으로 사용한다. `DATABASE_URL` 수동 지정 불필요.
+- pgvector 스키마는 자동 감지된다. `PGVECTOR_SCHEMA` 설정은 대부분 불필요.
+
 ### Claude Code 연동
 
 `.claude/settings.json`에 추가:

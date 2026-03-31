@@ -60,6 +60,19 @@ Once the server is running, verify it with the [First Memory Flow](docs/getting-
 
 For other platforms, see the [Compatible Platforms](#compatible-platforms) table above.
 
+### Update
+
+```bash
+cd ~/memento-mcp
+git pull origin main
+npm install
+npm run migrate
+# Restart service (systemd / pm2 / docker as appropriate)
+```
+
+- `npm run migrate` automatically reads DB settings from `.env`. No need to pass `DATABASE_URL` manually.
+- pgvector schema is auto-detected. `PGVECTOR_SCHEMA` is usually not needed.
+
 ### Claude Code Integration
 
 Add to `.claude/settings.json`:
