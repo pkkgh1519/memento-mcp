@@ -110,6 +110,9 @@ psql "$DATABASE_URL" -f lib/memory/migration-016-agent-topic-index.sql
 
 # Episodic memory table and indexes
 psql "$DATABASE_URL" -f lib/memory/migration-017-episodic.sql
+
+# OAuth client registration
+psql $DATABASE_URL -f lib/memory/migration-021-oauth-clients.sql
 ```
 
 Since v1.8.0, automatic migration is supported. Instead of running each file manually:

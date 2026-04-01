@@ -70,6 +70,7 @@ psql "$DATABASE_URL" -f lib/memory/migration-014-ttl-short.sql
 psql "$DATABASE_URL" -f lib/memory/migration-015-created-at-index.sql
 psql "$DATABASE_URL" -f lib/memory/migration-016-agent-topic-index.sql
 psql "$DATABASE_URL" -f lib/memory/migration-017-episodic.sql
+psql $DATABASE_URL -f lib/memory/migration-021-oauth-clients.sql  # OAuth 클라이언트 등록
 ```
 
 v1.8.0부터 자동 마이그레이션을 지원한다. 위 수동 실행 대신:

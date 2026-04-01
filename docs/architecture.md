@@ -72,7 +72,8 @@ server.js  (HTTP 서버)
             ├── migration-017-episodic.sql         episode 유형, context_summary, session_id 컬럼
             ├── migration-018-fragment-quota.sql   api_keys.fragment_limit 컬럼 (파편 할당량)
             ├── migration-019-hnsw-tuning.sql      HNSW ef_construction 64→128
-            └── migration-020-search-layer-latency.sql search_events 레이어별 레이턴시 컬럼
+            ├── migration-020-search-layer-latency.sql search_events 레이어별 레이턴시 컬럼
+            └── migration-021-oauth-clients.sql        OAuth 클라이언트 등록 테이블 (oauth_clients, client_id/secret/redirect_uris)
 ```
 
 지원 모듈:
@@ -97,6 +98,7 @@ lib/
 
 lib/admin/
 ├── ApiKeyStore.js     API 키 CRUD, 그룹 CRUD, 인증 검증 (SHA-256 해시 저장, 원시 키 단 1회 반환)
+├── OAuthClientStore.js OAuth 클라이언트 CRUD (client_id/secret 검증, redirect_uri 화이트리스트)
 ├── admin-auth.js      Admin 인증 라우트 (POST /auth, 세션 쿠키 발급)
 ├── admin-keys.js      API 키 관리 라우트
 ├── admin-memory.js    메모리 운영 라우트 (overview, fragments, anomalies, graph)
@@ -343,6 +345,46 @@ CREATE POLICY fragment_isolation_policy ON agent_memory.fragments
 이 격리 모델은 다중 에이전트 환경에서 키 단위 메모리 파티셔닝을 구현한다. API 키는 Admin SPA(`/v1/internal/model/nothing`)에서 관리하며, 생성 시 원시 키(`mmcp_<slug>_<32 hex>`)는 응답에서 단 1회만 반환되고 DB에는 SHA-256 해시만 저장된다.
 
 Admin UI(`/v1/internal/model/nothing`)는 마스터 키 인증이 필요하다. Authorization Bearer 헤더로 인증한다. POST /auth 성공 시 HttpOnly 세션 쿠키가 발급되어 이후 요청에 자동 첨부된다.
+
+### OAuth 2.0 인증 흐름
+
+MCP 클라이언트는 RFC 8414/RFC 7591/RFC 7636 기반 OAuth 2.0 흐름으로 연결한다. API 키를 `client_id`로 직접 사용하는 것도 지원된다.
+
+```
+1. Discovery
+   GET /.well-known/oauth-protected-resource
+       → resource_server, authorization_server 메타데이터 반환
+   GET /.well-known/oauth-authorization-server
+       → authorization_endpoint, token_endpoint, DCR endpoint 반환
+
+2. DCR (Dynamic Client Registration, RFC 7591)
+   POST /register
+   { client_name, redirect_uris, ... }
+   → { client_id, client_secret } 반환 (OAuthClientStore에 저장)
+
+3. Authorization (PKCE, RFC 7636)
+   GET /authorize?response_type=code&client_id=...&redirect_uri=...
+                  &code_challenge=...&code_challenge_method=S256&state=...
+   → trusted redirect_uri인 경우 사용자 승인 없이 자동 승인
+   → 승인 시 redirect_uri?code=...&state=... 로 리다이렉트
+
+4. Token
+   POST /token  (application/x-www-form-urlencoded)
+   grant_type=authorization_code, code=..., code_verifier=...
+   → { access_token, refresh_token, expires_in } 반환
+
+   POST /token
+   grant_type=refresh_token, refresh_token=...
+   → 새 access_token 발급. is_api_key 플래그가 갱신 토큰에 전파됨
+
+5. API 호출
+   Authorization: Bearer <access_token>
+   → lib/auth.js → validateAuthentication()이 토큰 검증 후 keyId 추출
+```
+
+- **API 키를 OAuth client_id로 사용**: `mmcp_` 접두사 키를 `client_id`로 전달하면 DCR 없이 직접 authorization_code 흐름 진입 가능
+- **세션 자동 복구**: "Session not found" 오류 발생 시 서버가 재인증 후 keyId/groupKeyIds를 보존하여 새 세션을 자동 생성한다
+- **구현 파일**: `lib/oauth.js`, `lib/admin/OAuthClientStore.js`
 
 ### Admin 콘솔 구조
 

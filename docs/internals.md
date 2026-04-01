@@ -38,6 +38,34 @@ memory_consolidate 도구가 실행되거나 서버 내부 스케줄러(6시간 
 
 ---
 
+## 세션 및 인증 내부 동작
+
+### updateTtlTier key_id 격리
+
+`FragmentWriter.updateTtlTier`는 `keyId` 파라미터를 받아 UPDATE 쿼리에 `key_id` 조건을 추가한다. 다른 API 키가 소유한 파편의 TTL 계층을 변경하는 크로스 키 접근을 차단한다. keyId가 null이면 마스터 키 소유 파편(`key_id IS NULL`)만 대상으로 한다.
+
+### 세션 자동 복구
+
+세션 스토어에서 "Session not found" 오류가 발생하면 서버가 재인증 흐름을 즉시 실행한다. 재인증 시 기존 세션의 `keyId`와 `groupKeyIds`를 복원하여 새 세션에 주입한다. 클라이언트 입장에서는 투명하게 연결이 유지되며, 재인증 이벤트는 audit 로그에 기록된다.
+
+### Redis TTL 동기화
+
+`validateStreamableSession`은 세션 갱신 시 고정된 `CACHE_SESSION_TTL` 대신 Redis에서 읽은 실제 잔여 TTL을 사용한다. 세션이 만료에 가까워질수록 갱신 후에도 남은 시간이 정확히 보존된다.
+
+### SSE 연결 해제
+
+SSE 스트림이 닫히면(`res.on('close')`) 서버는 SSE 응답 객체만 제거하고 세션 자체는 유지한다. 세션은 Redis TTL이 소진될 때까지 살아있으며, 클라이언트가 재연결하면 동일 세션을 이어서 사용할 수 있다.
+
+### OAuth refresh_token의 is_api_key 전파
+
+`POST /token` 에서 `grant_type=refresh_token`으로 토큰을 갱신할 때, 원본 토큰의 `is_api_key` 플래그가 새로 발급되는 access_token과 refresh_token에 그대로 전파된다. API 키 기반 클라이언트가 갱신 후에도 동일한 격리 컨텍스트를 유지한다.
+
+### SESSION_TTL 기본값 변경
+
+`SESSION_TTL` 환경변수의 기본값이 60분에서 240분으로 변경되었다. 장시간 작업 세션에서 인증 만료로 인한 중단을 줄이기 위한 조정이다.
+
+---
+
 ## 모순 탐지 파이프라인
 
 3단계 하이브리드 구조로 O(N²) LLM 비교 비용을 억제하면서 정밀도를 유지한다.

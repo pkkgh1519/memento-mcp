@@ -27,6 +27,7 @@ For MCP tool details, see [SKILL.md](../SKILL.md).
 | GET | /v1/internal/model/nothing/keys | API key list |
 | POST | /v1/internal/model/nothing/keys | Create API key. Raw key returned in response exactly once |
 | PUT | /v1/internal/model/nothing/keys/:id | Change API key status (active <-> inactive) |
+| PUT | /v1/internal/model/nothing/keys/:id/daily-limit | Change API key daily call limit. Master key required |
 | DELETE | /v1/internal/model/nothing/keys/:id | Delete API key |
 | GET | /v1/internal/model/nothing/groups | Key group list |
 | POST | /v1/internal/model/nothing/groups | Create key group |
@@ -61,6 +62,98 @@ For MCP tool details, see [SKILL.md](../SKILL.md).
 Even when Redis is disabled (`REDIS_ENABLED=false`) or connection fails, the server returns healthy (200). L1 cache and Working Memory are deactivated, but core memory storage/retrieval operates fully on PostgreSQL alone.
 
 Two authentication methods are available. Streamable HTTP authenticates via `Authorization: Bearer <MEMENTO_ACCESS_KEY>` header on the `initialize` request, then maintains the session. Legacy SSE authenticates via `/sse?accessKey=<MEMENTO_ACCESS_KEY>` query parameter.
+
+Accessing a protected resource without authentication returns `401 Unauthorized` with a `WWW-Authenticate: Bearer resource_metadata="</.well-known/oauth-protected-resource URL>"` header.
+
+---
+
+## OAuth 2.0
+
+Supports RFC 7591 Dynamic Client Registration and PKCE-based Authorization Code Flow.
+
+### /.well-known/oauth-authorization-server
+
+The server metadata response includes a `registration_endpoint`.
+
+```json
+{
+  "issuer": "https://{domain}",
+  "authorization_endpoint": "https://{domain}/authorize",
+  "token_endpoint": "https://{domain}/token",
+  "registration_endpoint": "https://{domain}/register",
+  "response_types_supported": ["code"],
+  "grant_types_supported": ["authorization_code"],
+  "code_challenge_methods_supported": ["S256"]
+}
+```
+
+### POST /register
+
+RFC 7591 Dynamic Client Registration. No authentication required.
+
+Request body:
+
+```json
+{
+  "client_name": "Claude",
+  "redirect_uris": ["https://claude.ai/api/mcp/auth_callback"]
+}
+```
+
+Response 201:
+
+```json
+{
+  "client_id": "mmcp_...",
+  "client_name": "Claude",
+  "redirect_uris": ["https://claude.ai/api/mcp/auth_callback"],
+  "grant_types": ["authorization_code"],
+  "token_endpoint_auth_method": "none"
+}
+```
+
+> API keys (mmcp_xxx) can be used directly as `client_id`. This applies when reusing an existing API key as an OAuth client in Claude.ai Web Integration.
+
+### GET /authorize
+
+OAuth 2.0 authorization endpoint. PKCE `code_challenge` and `code_challenge_method=S256` are required.
+
+Query parameters: `response_type=code`, `client_id`, `redirect_uri`, `code_challenge`, `code_challenge_method`, `state` (optional).
+
+Renders a user consent screen. After consent, returns a 302 redirect to `redirect_uri` with the `code` parameter.
+
+### POST /authorize
+
+Submitted as form data when the user allows or denies on the consent screen.
+
+| Field | Value |
+|-------|-------|
+| `decision` | `allow` or `deny` |
+| `response_type` | Original OAuth parameter |
+| `client_id` | Original OAuth parameter |
+| `redirect_uri` | Original OAuth parameter |
+| `code_challenge` | Original OAuth parameter |
+| `code_challenge_method` | Original OAuth parameter |
+| `state` | Original OAuth parameter (if present) |
+
+- `decision=allow`: 302 redirect to `redirect_uri?code=<code>&state=<state>`
+- `decision=deny`: 302 redirect to `redirect_uri?error=access_denied`
+
+### PUT /v1/internal/model/nothing/keys/:id/daily-limit
+
+Change the daily call limit for an API key. Master key required.
+
+Request body:
+
+```json
+{ "daily_limit": 50000 }
+```
+
+Response:
+
+```json
+{ "success": true, "daily_limit": 50000 }
+```
 
 ---
 

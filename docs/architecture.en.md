@@ -70,6 +70,7 @@ server.js  (HTTP server)
             +-- migration-018-fragment-quota.sql    api_keys.fragment_limit column (fragment quota)
             +-- migration-019-hnsw-tuning.sql       HNSW ef_construction 64→128
             +-- migration-020-search-layer-latency.sql search_events per-layer latency columns
+            +-- migration-021-oauth-clients.sql        OAuth client registration table (oauth_clients, client_id/secret/redirect_uris)
 ```
 
 Supporting modules:
@@ -94,6 +95,7 @@ lib/
 
 lib/admin/
 +-- ApiKeyStore.js     API key CRUD, group CRUD, authentication verification (SHA-256 hash storage, raw key returned once only)
++-- OAuthClientStore.js OAuth client CRUD (client_id/secret validation, redirect_uri whitelist)
 +-- admin-auth.js      Admin auth routes (POST /auth, session cookie issuance)
 +-- admin-keys.js      API key management routes
 +-- admin-memory.js    Memory operations routes (overview, fragments, anomalies, graph)
@@ -321,6 +323,46 @@ The `key_id` column provides an additional isolation layer at the API key level.
 This isolation model implements per-key memory partitioning in multi-agent environments. API keys are managed through the Admin SPA (`/v1/internal/model/nothing`). On creation, the raw key (`mmcp_<slug>_<32 hex>`) is returned in the response exactly once; only the SHA-256 hash is stored in the database.
 
 The Admin UI (`/v1/internal/model/nothing`) requires master key authentication. Authenticate via the Authorization Bearer header. A successful POST /auth issues an HttpOnly session cookie that is automatically attached to subsequent requests.
+
+### OAuth 2.0 Authentication Flow
+
+MCP clients connect via an OAuth 2.0 flow based on RFC 8414/RFC 7591/RFC 7636. Using an API key directly as `client_id` is also supported.
+
+```
+1. Discovery
+   GET /.well-known/oauth-protected-resource
+       -> Returns resource_server and authorization_server metadata
+   GET /.well-known/oauth-authorization-server
+       -> Returns authorization_endpoint, token_endpoint, DCR endpoint
+
+2. DCR (Dynamic Client Registration, RFC 7591)
+   POST /register
+   { client_name, redirect_uris, ... }
+   -> Returns { client_id, client_secret } (stored in OAuthClientStore)
+
+3. Authorization (PKCE, RFC 7636)
+   GET /authorize?response_type=code&client_id=...&redirect_uri=...
+                  &code_challenge=...&code_challenge_method=S256&state=...
+   -> Auto-approved without user interaction for trusted redirect_uris
+   -> On approval, redirects to redirect_uri?code=...&state=...
+
+4. Token
+   POST /token  (application/x-www-form-urlencoded)
+   grant_type=authorization_code, code=..., code_verifier=...
+   -> Returns { access_token, refresh_token, expires_in }
+
+   POST /token
+   grant_type=refresh_token, refresh_token=...
+   -> Issues new access_token. is_api_key flag is propagated to the refreshed token
+
+5. API Call
+   Authorization: Bearer <access_token>
+   -> lib/auth.js -> validateAuthentication() verifies token and extracts keyId
+```
+
+- **API key as OAuth client_id**: Passing an `mmcp_`-prefixed key as `client_id` allows direct entry into the authorization_code flow without DCR
+- **Session auto-recovery**: On "Session not found" error, the server re-authenticates and automatically creates a new session with keyId/groupKeyIds preserved
+- **Implementation files**: `lib/oauth.js`, `lib/admin/OAuthClientStore.js`
 
 ### Admin Console Structure
 

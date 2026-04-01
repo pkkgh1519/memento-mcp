@@ -38,6 +38,34 @@ An 18-step maintenance pipeline that runs when the memory_consolidate tool is in
 
 ---
 
+## Session and Authentication Internals
+
+### updateTtlTier key_id Isolation
+
+`FragmentWriter.updateTtlTier` accepts a `keyId` parameter and appends a `key_id` condition to the UPDATE query. This blocks cross-key access where a different API key could modify the TTL tier of fragments it does not own. When keyId is null, only master-key-owned fragments (`key_id IS NULL`) are targeted.
+
+### Session Auto-Recovery
+
+When a "Session not found" error occurs in the session store, the server immediately runs a re-authentication flow. During re-authentication, the original session's `keyId` and `groupKeyIds` are restored and injected into the new session. The reconnection is transparent to the client; the re-authentication event is recorded in the audit log.
+
+### Redis TTL Sync
+
+`validateStreamableSession` uses the actual remaining TTL read from Redis instead of a fixed `CACHE_SESSION_TTL` when refreshing a session. As a session approaches expiration, its remaining lifetime is preserved accurately after each refresh.
+
+### SSE Disconnect
+
+When an SSE stream closes (`res.on('close')`), the server removes only the SSE response object; the session itself is kept alive. The session persists until its Redis TTL expires, allowing a reconnecting client to resume the same session.
+
+### OAuth refresh_token is_api_key Propagation
+
+When refreshing a token via `POST /token` with `grant_type=refresh_token`, the `is_api_key` flag from the original token is propagated to the newly issued access_token and refresh_token. API key-based clients retain the same isolation context after a refresh.
+
+### SESSION_TTL Default Change
+
+The default value of the `SESSION_TTL` environment variable changed from 60 to 240 minutes. This reduces session interruptions due to auth expiry during long-running work sessions.
+
+---
+
 ## Contradiction Detection Pipeline
 
 A 3-stage hybrid architecture that suppresses O(N^2) LLM comparison costs while maintaining precision.

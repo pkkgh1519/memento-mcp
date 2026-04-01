@@ -27,6 +27,7 @@ MCP 도구 상세는 [SKILL.md](../SKILL.md) 참조.
 | GET | /v1/internal/model/nothing/keys | API 키 목록 조회 |
 | POST | /v1/internal/model/nothing/keys | API 키 생성. 원시 키는 응답에서 단 1회 반환 |
 | PUT | /v1/internal/model/nothing/keys/:id | API 키 상태 변경 (active ↔ inactive) |
+| PUT | /v1/internal/model/nothing/keys/:id/daily-limit | API 키 일일 호출 제한 변경. 마스터 키 인증 필요 |
 | DELETE | /v1/internal/model/nothing/keys/:id | API 키 삭제 |
 | GET | /v1/internal/model/nothing/groups | 키 그룹 목록 |
 | POST | /v1/internal/model/nothing/groups | 키 그룹 생성 |
@@ -62,6 +63,98 @@ Redis가 비활성화(`REDIS_ENABLED=false`)되거나 연결 실패해도 서버
 L1 캐시와 Working Memory가 비활성화되지만 핵심 기억 저장/검색은 PostgreSQL만으로 동작합니다.
 
 인증 방식은 두 가지다. Streamable HTTP는 `initialize` 요청 시 `Authorization: Bearer <MEMENTO_ACCESS_KEY>` 헤더로 인증하며 이후 세션으로 유지된다. Legacy SSE는 `/sse?accessKey=<MEMENTO_ACCESS_KEY>` 쿼리 파라미터로 인증한다.
+
+보호된 리소스에 인증 없이 접근하면 `401 Unauthorized`와 함께 `WWW-Authenticate: Bearer resource_metadata="</.well-known/oauth-protected-resource URL>"` 헤더가 반환된다.
+
+---
+
+## OAuth 2.0
+
+RFC 7591 Dynamic Client Registration 및 PKCE 기반 Authorization Code Flow를 지원한다.
+
+### /.well-known/oauth-authorization-server
+
+서버 메타데이터 응답에 `registration_endpoint`가 포함된다.
+
+```json
+{
+  "issuer": "https://{domain}",
+  "authorization_endpoint": "https://{domain}/authorize",
+  "token_endpoint": "https://{domain}/token",
+  "registration_endpoint": "https://{domain}/register",
+  "response_types_supported": ["code"],
+  "grant_types_supported": ["authorization_code"],
+  "code_challenge_methods_supported": ["S256"]
+}
+```
+
+### POST /register
+
+RFC 7591 동적 클라이언트 등록. 인증 불필요.
+
+요청 본문:
+
+```json
+{
+  "client_name": "Claude",
+  "redirect_uris": ["https://claude.ai/api/mcp/auth_callback"]
+}
+```
+
+응답 201:
+
+```json
+{
+  "client_id": "mmcp_...",
+  "client_name": "Claude",
+  "redirect_uris": ["https://claude.ai/api/mcp/auth_callback"],
+  "grant_types": ["authorization_code"],
+  "token_endpoint_auth_method": "none"
+}
+```
+
+> API 키(mmcp_xxx)를 `client_id`로 직접 사용할 수 있다. Claude.ai Web Integration에서 기존 API 키를 OAuth 클라이언트로 재사용하는 경우에 해당한다.
+
+### GET /authorize
+
+OAuth 2.0 인가 엔드포인트. PKCE `code_challenge` 및 `code_challenge_method=S256` 필수.
+
+쿼리 파라미터: `response_type=code`, `client_id`, `redirect_uri`, `code_challenge`, `code_challenge_method`, `state`(선택).
+
+사용자 동의 화면을 렌더링하며, 동의 후 `redirect_uri`로 `code`를 포함한 302 리다이렉트를 반환한다.
+
+### POST /authorize
+
+동의 화면에서 사용자가 허용 또는 거부를 선택할 때 폼 데이터로 제출된다.
+
+| 필드 | 값 |
+|------|----|
+| `decision` | `allow` 또는 `deny` |
+| `response_type` | 원본 OAuth 파라미터 |
+| `client_id` | 원본 OAuth 파라미터 |
+| `redirect_uri` | 원본 OAuth 파라미터 |
+| `code_challenge` | 원본 OAuth 파라미터 |
+| `code_challenge_method` | 원본 OAuth 파라미터 |
+| `state` | 원본 OAuth 파라미터 (존재 시) |
+
+- `decision=allow`: `redirect_uri?code=<code>&state=<state>` 로 302 리다이렉트
+- `decision=deny`: `redirect_uri?error=access_denied` 로 302 리다이렉트
+
+### PUT /v1/internal/model/nothing/keys/:id/daily-limit
+
+API 키의 일일 호출 제한을 변경한다. 마스터 키 인증 필요.
+
+요청 본문:
+
+```json
+{ "daily_limit": 50000 }
+```
+
+응답:
+
+```json
+{ "success": true, "daily_limit": 50000 }
+```
 
 ---
 

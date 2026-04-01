@@ -106,14 +106,17 @@ Memento is a standard MCP (Model Context Protocol) server. It works with any AI 
 |----------|----------------|-----------|
 | Claude Code | ~/.claude/settings.json | Streamable HTTP |
 | Claude Desktop | claude_desktop_config.json | Streamable HTTP |
+| Claude.ai Web | Settings > Integrations | OAuth (RFC 7591) |
 | Cursor | .cursor/mcp.json | Streamable HTTP |
 | Windsurf | ~/.codeium/windsurf/mcp_config.json | Streamable HTTP |
 | GitHub Copilot | VS Code MCP Marketplace | Streamable HTTP |
 | Codex CLI | ~/.codex/config.toml | Streamable HTTP |
-| ChatGPT Desktop | Developer Mode > Apps | Streamable HTTP |
+| ChatGPT Desktop | Developer Mode > Apps | OAuth (RFC 7591) |
 | Continue | config.json | Streamable HTTP |
 
 Common setup: Server URL `http://localhost:57332/mcp`, Authorization header `Bearer YOUR_ACCESS_KEY`.
+
+For Claude.ai Web and ChatGPT, Memento uses OAuth. Enter your API key (`mmcp_xxx`) as the `client_id` -- no Dynamic Client Registration (RFC 7591) flow required. Redirect URIs from trusted domains (claude.ai, chatgpt.com) are auto-approved.
 
 See [integration guides](docs/getting-started/) for platform-specific setup.
 
@@ -125,7 +128,8 @@ See [integration guides](docs/getting-started/) for platform-specific setup.
 | `recall` | Returns relevant memories via keyword + semantic 3-tier search |
 | `context` | Automatically restores key context at session start |
 | Auto-cleanup | Duplicate merging, contradiction detection, importance decay, TTL-based forgetting |
-| Admin Console | Memory explorer, knowledge graph, statistics dashboard |
+| Admin Console | Memory explorer, knowledge graph, statistics dashboard, API key group/status filters, inline daily-limit editing |
+| OAuth Integration | RFC 7591 Dynamic Client Registration, Claude.ai Web and ChatGPT integration support |
 
 See [SKILL.md](SKILL.md) for the full list of MCP tools.
 
@@ -184,6 +188,7 @@ Memento is optimized for fact caching. When narrative context matters:
 - Rate Limiting: 100/min per API key, 30/min per IP. Configurable via environment variables.
 - Worker Recovery: Embedding/evaluator workers use exponential backoff (1s→60s) on errors.
 - Graceful Shutdown: On SIGTERM, waits up to 30s for workers to drain, then runs session auto-reflect.
+- OAuth Endpoints: On authentication failure, a `WWW-Authenticate` header is returned so OAuth clients can automatically initiate the auth flow. Session TTL defaults to 240 minutes.
 
 ## Known Limitations
 
