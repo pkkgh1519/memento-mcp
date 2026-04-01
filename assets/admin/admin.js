@@ -1392,6 +1392,63 @@ function renderKeyInspector(key, container) {
   dailyRow.appendChild(dailyVal);
   idCard.appendChild(dailyRow);
 
+  /* Permissions — toggle */
+  const permRow = document.createElement("div");
+  permRow.className = "flex justify-between items-center";
+  const permLabel = document.createElement("span");
+  permLabel.className = "text-[10px] font-bold text-slate-500 uppercase tracking-wider";
+  permLabel.textContent = "PERMISSIONS";
+  permRow.appendChild(permLabel);
+
+  const permBtns = document.createElement("div");
+  permBtns.className = "flex gap-1";
+  ["read", "write"].forEach(p => {
+    const btn = document.createElement("button");
+    const active = (key.permissions || []).includes(p);
+    btn.className = "px-2 py-0.5 text-[10px] font-bold rounded-sm border " +
+      (active ? "bg-primary/20 text-primary border-primary/30" : "bg-transparent text-slate-600 border-white/10");
+    btn.textContent = p.toUpperCase();
+    btn.addEventListener("click", async () => {
+      const current = new Set(key.permissions || []);
+      if (current.has(p)) current.delete(p); else current.add(p);
+      const perms = Array.from(current);
+      if (!perms.length) { showToast("At least one permission required", "warning"); return; }
+      const r = await api("/keys/" + key.id + "/permissions", { method: "PUT", body: { permissions: perms } });
+      if (r.ok) { showToast("Permissions updated", "success"); key.permissions = perms; renderKeys(container); }
+      else showToast(r.data?.error ?? "Update failed", "error");
+    });
+    permBtns.appendChild(btn);
+  });
+  permRow.appendChild(permBtns);
+  idCard.appendChild(permRow);
+
+  /* Fragment Limit — editable */
+  const fragRow = document.createElement("div");
+  fragRow.className = "flex justify-between items-center";
+  const fragLabel = document.createElement("span");
+  fragLabel.className = "text-[10px] font-bold text-slate-500 uppercase tracking-wider";
+  fragLabel.textContent = "FRAGMENT LIMIT";
+  fragRow.appendChild(fragLabel);
+
+  const fragVal = document.createElement("input");
+  fragVal.type = "number";
+  fragVal.min = "0";
+  fragVal.max = "99999";
+  fragVal.step = "1000";
+  fragVal.value = key.fragment_limit != null ? String(key.fragment_limit) : "";
+  fragVal.placeholder = "Unlimited";
+  fragVal.className = "w-24 bg-transparent border border-outline-variant/30 rounded-sm px-2 py-1 text-right text-sm font-mono text-on-surface focus:border-primary focus:outline-none";
+  fragVal.addEventListener("change", async () => {
+    const raw = fragVal.value.trim();
+    const limit = raw === "" ? null : parseInt(raw);
+    if (limit !== null && (isNaN(limit) || limit < 0)) { showToast("0 이상 입력 또는 빈칸(무제한)", "warning"); return; }
+    const r = await api("/keys/" + key.id + "/fragment-limit", { method: "PUT", body: { fragment_limit: limit } });
+    if (r.ok) { showToast("Fragment limit updated", "success"); key.fragment_limit = limit; }
+    else showToast(r.data?.error ?? "Update failed", "error");
+  });
+  fragRow.appendChild(fragVal);
+  idCard.appendChild(fragRow);
+
   panel.appendChild(idCard);
 
   /* Assigned Groups */
@@ -1717,6 +1774,41 @@ async function renderKeys(container) {
     g3.appendChild(fragHint);
     form.appendChild(g3);
 
+    const g4 = document.createElement("div");
+    g4.className = "form-group";
+    const l4 = document.createElement("label");
+    l4.className = "form-label";
+    l4.textContent = "PERMISSIONS";
+    g4.appendChild(l4);
+
+    const permWrap = document.createElement("div");
+    permWrap.className = "flex gap-4";
+
+    const readLabel = document.createElement("label");
+    readLabel.className = "flex items-center gap-2 text-sm text-on-surface cursor-pointer";
+    const readCb = document.createElement("input");
+    readCb.type = "checkbox";
+    readCb.id = "modal-perm-read";
+    readCb.checked = true;
+    readCb.className = "accent-primary";
+    readLabel.appendChild(readCb);
+    readLabel.appendChild(document.createTextNode("Read"));
+    permWrap.appendChild(readLabel);
+
+    const writeLabel = document.createElement("label");
+    writeLabel.className = "flex items-center gap-2 text-sm text-on-surface cursor-pointer";
+    const writeCb = document.createElement("input");
+    writeCb.type = "checkbox";
+    writeCb.id = "modal-perm-write";
+    writeCb.checked = true;
+    writeCb.className = "accent-primary";
+    writeLabel.appendChild(writeCb);
+    writeLabel.appendChild(document.createTextNode("Write"));
+    permWrap.appendChild(writeLabel);
+
+    g4.appendChild(permWrap);
+    form.appendChild(g4);
+
     showModal("Generate New API Credential", form, [
       { id: "create", label: "GENERATE AND VIEW SECRET", cls: "btn-primary", handler: async () => {
         const name        = document.getElementById("modal-key-name")?.value.trim();
@@ -1724,7 +1816,10 @@ async function renderKeys(container) {
         const fragLimitRaw = document.getElementById("modal-key-frag-limit")?.value.trim();
         const fragment_limit = fragLimitRaw ? parseInt(fragLimitRaw) : null;
         if (!name) { showToast("Name required", "warning"); return; }
-        const body = { name, daily_limit };
+        const perms = [];
+        if (document.getElementById("modal-perm-read")?.checked) perms.push("read");
+        if (document.getElementById("modal-perm-write")?.checked) perms.push("write");
+        const body = { name, daily_limit, permissions: perms };
         if (fragment_limit != null) body.fragment_limit = fragment_limit;
         const res = await api("/keys", { method: "POST", body });
         closeModal();
