@@ -17,6 +17,10 @@
   </a>
 </p>
 
+<p align="center">
+  <a href="README.md">📖 한국어 문서</a>
+</p>
+
 # Memento MCP
 
 > Give your AI a memory.

@@ -17,6 +17,10 @@
   </a>
 </p>
 
+<p align="center">
+  <a href="README.en.md">📖 English Documentation</a>
+</p>
+
 # Memento MCP
 
 > AI에게 기억을 줍니다.
