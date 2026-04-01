@@ -215,7 +215,7 @@ remember(
 - keywords에 플랫폼명 포함: `["memento-mcp", "claude-code", "nerdvana"]`
 - recall 시 플랫폼 필터: `recall(keywords=["claude-code"])`
 
-## 도구 레퍼런스 (13개)
+## 도구 레퍼런스 (14개)
 
 ### remember
 
@@ -379,6 +379,16 @@ summary 또는 sessionId 중 하나 이상 필수.
 | 이름 | 타입 | 필수 | 설명 |
 |------|------|------|------|
 | id | string | O | 조회할 파편 ID |
+
+### get_skill_guide
+
+이 문서(SKILL.md)의 내용을 반환. 전체 또는 섹션별 조회 가능. 플랫폼에 기억 도구 설정이 없는 경우 이 도구를 호출하여 최적 활용법을 안내한다.
+
+| 이름 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| section | string | - | overview, lifecycle, keywords, search, episode, multiplatform, tools, importance |
+
+미지정 시 전체 가이드(~12KB) 반환.
 
 ## 중요도 기본값
 
