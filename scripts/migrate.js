@@ -59,6 +59,22 @@ async function migrate() {
       } catch { /* pgvector not installed */ }
     }
 
+    // embedding 컬럼 타입에 따른 ops 클래스 결정
+    let opsClass = "vector_cosine_ops";
+    try {
+      const colResult = await client.query(
+        `SELECT udt_name
+         FROM information_schema.columns
+         WHERE table_schema = 'agent_memory'
+           AND table_name   = 'fragments'
+           AND column_name  = 'embedding'`
+      );
+      if (colResult.rows.length > 0 && colResult.rows[0].udt_name === "halfvec") {
+        opsClass = "halfvec_cosine_ops";
+      }
+    } catch { /* fragments 테이블 미존재 시 기본값 유지 */ }
+    console.log(`Embedding ops class: ${opsClass}`);
+
     const searchPathParts = ["agent_memory"];
     if (pgvectorSchema) searchPathParts.push(pgvectorSchema);
     searchPathParts.push("public");
@@ -86,6 +102,7 @@ async function migrate() {
     for (const file of pending) {
       console.log(`  Applying ${file}...`);
       let sql = fs.readFileSync(path.join(MIGRATION_DIR, file), "utf-8");
+      sql = sql.replaceAll("vector_cosine_ops", opsClass);
       // Strip inner BEGIN/COMMIT (migrate.js wraps with outer transaction)
       sql = sql.replace(/^\s*BEGIN\s*;?\s*$/gmi, "");
       sql = sql.replace(/^\s*COMMIT\s*;?\s*$/gmi, "");

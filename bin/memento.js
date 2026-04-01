@@ -11,6 +11,7 @@ const COMMANDS = {
   recall:    () => import('../lib/cli/recall.js'),
   remember:  () => import('../lib/cli/remember.js'),
   inspect:   () => import('../lib/cli/inspect.js'),
+  update:    () => import('../lib/cli/update.js'),
 };
 
 function printUsage() {
@@ -27,6 +28,7 @@ function printUsage() {
     '  recall <query> [--topic x]  Search fragments from terminal',
     '  remember <content> --topic  Store a fragment from terminal',
     '  inspect <fragment-id>       Show fragment detail + 1-hop links',
+    '  update [--execute] [--redetect]  Check and apply updates (default: dry-run)',
     '',
     'Options:',
     '  --help                      Show this help message',
@@ -60,6 +62,21 @@ async function main() {
       console.error(err.stack);
     }
     process.exit(1);
+  }
+
+  // Non-blocking update check
+  if (cmd !== "update" && process.env.UPDATE_CHECK_DISABLED !== "true") {
+    import("../lib/updater/cache.js").then(async ({ UpdateCache }) => {
+      const c = new UpdateCache();
+      if (!c.isExpired(Number(process.env.UPDATE_CHECK_INTERVAL_HOURS || 24))) return;
+      try {
+        const { checkForUpdate } = await import("../lib/updater/version-checker.js");
+        const r = await checkForUpdate({ githubToken: process.env.GITHUB_TOKEN });
+        const { detectInstallType } = await import("../lib/updater/install-detector.js");
+        c.set({ ...r, installType: await detectInstallType() });
+        if (r.updateAvailable) process.stderr.write(`\n[memento-mcp] v${r.latestVersion} available. Run "memento-mcp update" to upgrade.\n`);
+      } catch { /* network failure - silent */ }
+    }).catch(() => {});
   }
 }
 

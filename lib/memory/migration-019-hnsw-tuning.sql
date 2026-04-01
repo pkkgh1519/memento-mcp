@@ -1,3 +1,5 @@
+-- NOTE: vector_cosine_ops is auto-replaced by migrate.js with the correct
+--       ops class (halfvec_cosine_ops when embedding column is halfvec type).
 -- Migration 019: HNSW index tuning for improved L3 search latency
 -- Current:  m=16, ef_construction=64  (default ef_search=40)
 -- Target:   m=16, ef_construction=128 (ef_search=80 set at session level)
