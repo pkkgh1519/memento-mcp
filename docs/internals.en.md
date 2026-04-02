@@ -44,9 +44,19 @@ An 18-step maintenance pipeline that runs when the memory_consolidate tool is in
 
 `FragmentWriter.updateTtlTier` accepts a `keyId` parameter and appends a `key_id` condition to the UPDATE query. This blocks cross-key access where a different API key could modify the TTL tier of fragments it does not own. When keyId is null, only master-key-owned fragments (`key_id IS NULL`) are targeted.
 
+### Workspace Filter Propagation
+
+`FragmentSearch._buildSearchQuery()` normalizes the `workspace` value into `sq.workspace`. `_executeSearch()` passes it to L2 (keyword/topic) search options and as the 8th argument to L3 `searchBySemantic`.
+
+All six `FragmentReader` methods — `searchByKeywords`, `searchByTopic`, `searchBySemantic`, `searchByTimeRange`, `searchAsOf`, and `searchBySource` — support the `(workspace = $N OR workspace IS NULL)` condition. `_searchTemporal` also passes `workspace: sq.workspace` to `searchByTimeRange`.
+
+`MemoryManager` workspace resolution priority: `params.workspace ?? params._defaultWorkspace ?? null`. `_defaultWorkspace` is read from `api_keys.default_workspace` at auth time, stored in the session, and injected as `args._defaultWorkspace` on each tool call.
+
 ### Session Auto-Recovery
 
-When a "Session not found" error occurs in the session store, the server immediately runs a re-authentication flow. During re-authentication, the original session's `keyId` and `groupKeyIds` are restored and injected into the new session. The reconnection is transparent to the client; the re-authentication event is recorded in the audit log.
+When a "Session not found" or "Session expired" error occurs in the session store, the server immediately runs a re-authentication flow. During re-authentication, the original session's `keyId` and `groupKeyIds` are restored and injected into the new session. The reconnection is transparent to the client; the re-authentication event is recorded in the audit log.
+
+Legacy SSE sessions also apply a sliding window: `expiresAt` is refreshed to `now + SESSION_TTL_MS` on every validated request.
 
 ### Redis TTL Sync
 
@@ -62,7 +72,33 @@ When refreshing a token via `POST /token` with `grant_type=refresh_token`, the `
 
 ### SESSION_TTL Default Change
 
-The default value of the `SESSION_TTL` environment variable changed from 60 to 240 minutes. This reduces session interruptions due to auth expiry during long-running work sessions.
+The default value of the `SESSION_TTL` environment variable changed from 240 to 43200 minutes (30 days). Sessions use a sliding window — the TTL is extended on every tool use, so sessions expire only after 30 days of inactivity. Actively used sessions effectively never expire.
+
+---
+
+## Reranker (Cross-Encoder Reranking)
+
+After RRF merging, the top 30 candidates are reranked by a cross-encoder for higher precision. `preloadReranker()` is called asynchronously at server startup to prepare the model before the first recall request.
+
+**Dual mode:**
+- `RERANKER_URL` set: external HTTP service (`POST /rerank { query, documents[] } → { scores[] }`)
+- Not set: `@huggingface/transformers` + ONNX `ms-marco-MiniLM-L-6-v2` in-process (~80MB, CPU)
+
+**Automatic external-to-inprocess fallback:** After 3 consecutive failures, switches to in-process mode permanently until server restart. In either mode, if scores cannot be retrieved, the original RRF result is returned unchanged (graceful degradation).
+
+**Final score:** `sigmoid(logit) * recency_boost`. recency_boost uses 365-day linear decay in the [0.9, 1.1] range.
+
+---
+
+## TemporalLinker (Time-Based Auto-Linking)
+
+Runs asynchronously in the `MemoryManager._autoLinkOnRemember()` chain on every `remember()` call. Creates `temporal` links between the new fragment and existing fragments within ±24h that share the same `topic` (up to 5 links).
+
+**Weight formula:** `max(0.3, 1.0 - hours/24)` — 0h=1.0, 12h=0.5, 24h=0.3.
+
+**API key isolation:** `options.keyId` is forwarded as `key_id = ANY($n)` in the SQL query so that fragments owned by other API keys are never linked.
+
+`fragment_links.weight` was changed from integer to real in migration-023 to support float weights.
 
 ---
 
