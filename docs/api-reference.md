@@ -28,6 +28,7 @@ MCP 도구 상세는 [SKILL.md](../SKILL.md) 참조.
 | POST | /v1/internal/model/nothing/keys | API 키 생성. 원시 키는 응답에서 단 1회 반환 |
 | PUT | /v1/internal/model/nothing/keys/:id | API 키 상태 변경 (active ↔ inactive) |
 | PUT | /v1/internal/model/nothing/keys/:id/daily-limit | API 키 일일 호출 제한 변경. 마스터 키 인증 필요 |
+| PATCH | /v1/internal/model/nothing/keys/:id/workspace | API 키의 default_workspace 변경. `{ workspace: "name" }` 또는 `{ workspace: null }` (null=해제) |
 | DELETE | /v1/internal/model/nothing/keys/:id | API 키 삭제 |
 | GET | /v1/internal/model/nothing/groups | 키 그룹 목록 |
 | POST | /v1/internal/model/nothing/groups | 키 그룹 생성 |
@@ -37,7 +38,7 @@ MCP 도구 상세는 [SKILL.md](../SKILL.md) 참조.
 | DELETE | /v1/internal/model/nothing/groups/:gid/members/:kid | 그룹에서 키 제거 |
 | GET | /v1/internal/model/nothing/memory/overview | 메모리 전체 현황 (유형/토픽 분포, 품질 미검증, superseded, 최근 활동) |
 | GET | /v1/internal/model/nothing/memory/search-events?days=N | 검색 이벤트 분석 (총 검색 수, 실패 쿼리, 피드백 통계) |
-| GET | /v1/internal/model/nothing/memory/fragments | 파편 검색/필터링 (topic, type, key_id, page, limit) |
+| GET | /v1/internal/model/nothing/memory/fragments | 파편 검색/필터링 (topic, type, key_id, workspace, page, limit) |
 | GET | /v1/internal/model/nothing/memory/anomalies | 이상 탐지 결과 |
 | GET | /v1/internal/model/nothing/sessions | 세션 목록 (활동 enrichment, 미반영 세션 수) |
 | GET | /v1/internal/model/nothing/sessions/:id | 세션 상세 (검색 이벤트, 도구 피드백) |
