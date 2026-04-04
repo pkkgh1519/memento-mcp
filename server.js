@@ -132,7 +132,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   /* OAuth 2.0 */
-  if (req.method === "GET" && url.pathname === "/.well-known/oauth-authorization-server/oauth") {
+  if (req.method === "GET" && (url.pathname === "/.well-known/oauth-authorization-server" || url.pathname === "/.well-known/oauth-authorization-server/oauth")) {
     await handleOAuthServerMetadata(req, res);
     return;
   }

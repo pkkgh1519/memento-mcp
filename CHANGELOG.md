@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.5.1] - 2026-04-04
+
+### Added
+- `context()`: `_memento_hint` 필드 추가 — AI 능동 행동 유도 (active_errors / empty_context signal)
+- `context(structured=true)`: `rankedInjection` 필드 추가 — anchor 고정 + 복합 점수(importance×0.6 + ema_activation×0.4) 정렬 슬라이스
+- `tool_recall`: `_memento_hint` 필드 추가 — no_results / stale_results / consider_context signal
+- `config/memory.js`: `rankWeights` 설정 추가 (importance: 0.6, ema_activation: 0.4)
+- `SKILL.md`: curl 직접 호출 섹션, 능동 활용 트리거 섹션, 안티패턴 섹션 추가
+- `lib/tools/memory-schemas.js`: `get_skill_guide` section 옵션에 `triggers`, `antipatterns` 추가
+- `lib/tools/memory.js`: SKILL_SECTIONS에 `triggers`, `antipatterns` regex 추가
+
+### Fixed
+- `oauth.js`: `issuer` 및 `authorization_servers` URL에서 `/oauth` 서픽스 제거 — RFC 8414 준수
+- `oauth.js`: 등록되지 않은 client_id + trusted redirect_uri 조합 허용 (anonymous client) — claude.ai 등 DCR 없이 접근하는 클라이언트 지원
+- `server.js`: `/.well-known/oauth-authorization-server` 경로 추가 (기존 `/oauth` 서픽스 경로 유지)
+- `lib/tools/memory.js`: `experiential` SKILL_SECTIONS regex가 이후 섹션을 삼키는 버그 수정
+
 ## [2.5.0] - 2026-04-03
 
 ### Fixed (보안 / 정확성)

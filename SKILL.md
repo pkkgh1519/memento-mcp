@@ -236,6 +236,75 @@ remember(
 )
 ```
 
+## MCP 도구 사용 불가 시 curl 직접 호출
+
+세션 컨텍스트 초과, 연결 끊김, 플랫폼 제한 등으로 remember/recall/context/reflect MCP 도구를 호출할 수 없을 때는 curl로 직접 HTTP 요청한다.
+
+서버 주소(`SERVER_URL`)와 `ACCESS_KEY`는 MCP 연결 설정(claude_desktop_config.json, .claude/settings.json 등)에서 확인한다.
+
+```bash
+# Step 1: 세션 초기화 (SESSION_ID 획득 — 이후 모든 요청에 필요)
+SESSION_ID=$(curl -s -X POST $SERVER_URL \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ACCESS_KEY" \
+  -D - \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl","version":"1"}}}' \
+  2>/dev/null | grep -i "^mcp-session-id" | tr -d '\r' | awk '{print $2}')
+
+# reflect — 세션 핵심 내용 요약 저장
+curl -s -X POST $SERVER_URL \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ACCESS_KEY" \
+  -H "MCP-Session-Id: $SESSION_ID" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"reflect","arguments":{
+    "agentId":"AGENT_ID",
+    "summary":["요약 내용1","요약 내용2"],
+    "decisions":["기술/아키텍처 결정사항"],
+    "errors_resolved":["원인: X → 해결: Y"],
+    "keywords":["프로젝트명","호스트명"]
+  }}}'
+
+# remember — 단일 파편 저장
+curl -s -X POST $SERVER_URL \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ACCESS_KEY" \
+  -H "MCP-Session-Id: $SESSION_ID" \
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"remember","arguments":{
+    "agentId":"AGENT_ID",
+    "content":"저장할 내용",
+    "type":"fact",
+    "importance":0.7,
+    "keywords":["키워드"]
+  }}}'
+
+# recall — 기억 검색
+curl -s -X POST $SERVER_URL \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ACCESS_KEY" \
+  -H "MCP-Session-Id: $SESSION_ID" \
+  -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"recall","arguments":{
+    "agentId":"AGENT_ID",
+    "query":"검색어",
+    "keywords":["키워드"]
+  }}}'
+
+# context — 핵심 기억 로드
+curl -s -X POST $SERVER_URL \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ACCESS_KEY" \
+  -H "MCP-Session-Id: $SESSION_ID" \
+  -d '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"context","arguments":{
+    "agentId":"AGENT_ID",
+    "structured":true
+  }}}'
+```
+
+응답에서 결과 추출:
+```bash
+# 위 명령 끝에 파이프로 추가
+| python3 -c "import sys,json; r=json.load(sys.stdin); print(r['result']['content'][0]['text'])"
+```
+
 ## 다중 플랫폼/디바이스 기억 관리
 
 기억은 API 키 단위로 격리된다. 같은 그룹의 키는 기억을 공유한다.
@@ -646,3 +715,72 @@ reflect(
 )
 # → episode 파편 자동 생성 + preceded_by 엣지 자동 연결
 ```
+
+## 능동 활용 트리거
+
+사용자 요청 없이도 아래 신호를 감지하면 즉시 해당 도구를 선제 실행한다.
+
+### 상황별 의사결정 트리
+
+```
+세션 시작
+  └─ context(structured=true) 즉시 호출
+       └─ _memento_hint.signal = "empty_context"?
+             └─ remember 또는 reflect 제안
+       └─ _memento_hint.signal = "active_errors"?
+             └─ 각 error 파편을 사용자에게 알리고 해결 여부 확인
+
+에러/오류/실패 발화 감지
+  └─ recall(type="error", keywords=[관련 키워드]) 먼저 실행
+       └─ 과거 해결 기록 있으면 → 사용자에게 제시
+       └─ _memento_hint.signal = "no_results"? → 에러 해결 후 새로 저장 예정임을 인지
+
+에러 원인 확정
+  └─ remember(type="error", importance=0.8) 즉시 저장
+
+에러 해결 완료
+  └─ forget(id=해당 error 파편 ID)
+  └─ remember(type="procedure", importance=0.8) — 해결책 저장
+  └─ link(fromId=에러파편, toId=해결파편, relationType="resolved_by") — 이미 forget 전이라면
+
+"설정/포트/경로/버전" 변경 시작 전
+  └─ recall(keywords=[설정명]) — 이전 결정 확인
+
+아키텍처/기술 선택 확정
+  └─ remember(type="decision", importance=0.7) 즉시 저장
+
+"이전에/저번에/전에" 언급
+  └─ recall(query=관련 내용) 즉시 호출
+
+세션 종료 의도 감지 ("잠깐", "나중에", "오늘은 여기까지" 등)
+  └─ reflect(summary=[...], decisions=[...], errors_resolved=[...])
+```
+
+### _memento_hint 처리 규칙
+
+recall 또는 context 응답에 `_memento_hint` 필드가 있으면:
+- `signal` 값을 읽어 상황 파악
+- `suggestion` 텍스트를 사용자에게 알리거나 즉시 실행 고려
+- `trigger` 필드에 지정된 도구를 다음 행동으로 우선 고려
+
+| signal | 의미 | 권장 행동 |
+|--------|------|----------|
+| no_results | 관련 기억 없음 | 작업 완료 후 remember |
+| stale_results | 30일+ 경과 파편 | amend로 갱신 또는 forget |
+| consider_context | 파편 5개 이상 | includeContext=true 재검색 |
+| active_errors | 미해결 error 파편 존재 | 각 파편 확인 후 forget |
+| empty_context | 저장된 기억 없음 | 세션 후 remember/reflect |
+
+## 안티패턴
+
+다음 행동은 Memento를 무력화한다. 반드시 피할 것.
+
+| 안티패턴 | 왜 나쁜가 | 올바른 행동 |
+|---------|----------|------------|
+| 사용자가 "기억해"라고 해야만 remember 호출 | 중요 정보가 세션 경계에서 유실됨 | 중요 발생 시점에 자동 저장 |
+| recall 없이 에러 수정 시작 | 과거 동일 에러 해결책을 중복 재발견하는 낭비 | recall(type="error") 선행 필수 |
+| 에러 해결 후 forget 생략 | 다음 세션에도 동일 error 파편이 context에 잡혀 혼란 | 해결 즉시 forget |
+| context 호출 없이 작업 시작 | 이전 세션에서 축적된 전체 맥락 유실 | 세션 시작 즉시 context |
+| reflect 없이 세션 종료 | 이번 세션 작업이 전부 휘발됨 | 중요 작업 완료 후 reflect |
+| remember 후 link 생략 | 고립된 파편만 생성, 그래프 연결 없음 | 인과관계 있는 파편은 link로 연결 |
+| 모든 내용을 하나의 파편에 저장 | 검색 정밀도 저하, 중요도 희석 | 원자적 분해 (1 사실 = 1 파편) |
