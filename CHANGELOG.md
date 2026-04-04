@@ -1,5 +1,36 @@
 # Changelog
 
+## [2.5.2] - 2026-04-05
+
+### Refactored
+- `MemoryManager.js` 1,790줄 → 904줄 (-49.5%):
+  - `ContextBuilder` 추출 (context 330줄 → build() 위임)
+  - `ReflectProcessor` 추출 (reflect 220줄 + _buildEpisodeContext + _saveTaskFeedback)
+  - `BatchRememberProcessor` 추출 (batchRemember 247줄, Phase A/B/C 구조 유지)
+  - `QuotaChecker` 추출 (API 키 파편 할당량 검사)
+  - `RememberPostProcessor` 추출 (remember 후처리 파이프라인)
+- `http-handlers.js` 864줄 → 21줄 re-export:
+  - `lib/handlers/mcp-handler.js` (Streamable HTTP)
+  - `lib/handlers/sse-handler.js` (Legacy SSE)
+  - `lib/handlers/health-handler.js` (Health/Metrics)
+  - `lib/handlers/oauth-handler.js` (OAuth 2.1)
+  - `lib/handlers/_common.js` (공통 유틸리티)
+
+### Added
+- `EmbeddingCache`: 쿼리 임베딩 Redis 캐시 (키: `emb:q:{sha256}`, TTL 1h, Float32Array 바이너리)
+- `migration-028`: 복합 인덱스 `(agent_id, topic, created_at DESC)` + `(key_id, agent_id, importance DESC) WHERE valid_to IS NULL`
+- `config/validate-memory-config.js`: 메모리 설정 런타임 검증
+- `tests/README.md`: 테스트 계층 규칙 문서
+
+### Fixed
+- `ReflectProcessor`: errors_resolved 파편에 `resolution_status='resolved'` 자동 세팅
+- `ReflectProcessor`: open_questions 파편에 `resolution_status='open'` 자동 세팅
+- `ReflectProcessor`: 모든 reflect 생성 파편에 `session_id` 전파
+
+### Performance
+- `ConsolidatorGC.compressOldFragments()`: KNN N+1 쿼리 → BATCH_SIZE=20 Promise.all 병렬
+- `FragmentSearch._searchL3()`: EmbeddingCache 적용으로 반복 쿼리 임베딩 생성 제거
+
 ## [2.5.1] - 2026-04-04
 
 ### Added

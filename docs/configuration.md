@@ -181,6 +181,18 @@ export const MEMORY_CONFIG = {
 
 importanceWeight + recencyWeight + semanticWeight의 합은 1.0이어야 한다. halfLifeDays는 감쇠의 속도를 결정하며 staleThresholds와 독립적으로 동작한다. rrfSearch.k는 RRF 점수의 분모 안정화 상수로, 60이 일반 용도 기본값이다. gc.factDecisionPolicy는 fact/decision 유형의 고립 파편을 별도 기준으로 정리하여 검색 노이즈를 줄인다.
 
+### 런타임 검증
+
+`config/validate-memory-config.js`가 서버 시작 시 `MEMORY_CONFIG`의 구조적 정합성을 1회 검증한다. 검증 실패 시 에러를 throw하여 서버 시작을 중단한다.
+
+검증 항목:
+- `ranking` 가중치(importanceWeight + recencyWeight + semanticWeight) 합계 = 1.0
+- `contextInjection.rankWeights` 합계 = 1.0
+- `semanticSearch.minSimilarity`, `morphemeIndex.minSimilarity`, `gc.utilityThreshold`는 0~1 범위
+- `halfLifeDays` 모든 항목은 양수
+- `gc.gracePeriodDays` < `gc.inactiveDays`
+- `embeddingWorker.batchSize`, `embeddingWorker.intervalMs`, `pagination.defaultPageSize`, `pagination.maxPageSize`, `gc.maxDeletePerCycle`는 양의 정수
+
 ---
 
 ## 임베딩 Provider 전환
@@ -492,6 +504,42 @@ EMBEDDING_DIMENSIONS=768
 | Mistral mistral-embed | 1024 | 코드 교체 | 없음 |
 | Jina jina-embeddings-v3 | 1024 | 코드 교체 | 있음 (1M/월) |
 | Nomic nomic-embed-text-v1.5 | 768 | 코드 교체 | 있음 (1M/월) |
+
+---
+
+## 마이그레이션
+
+`npm run migrate`로 미적용 마이그레이션을 순서대로 실행한다. `schema_migrations` 테이블에서 이력을 관리하며, 이미 적용된 마이그레이션은 건너뛴다.
+
+| 번호 | 파일 | 설명 |
+|------|------|------|
+| 001 | migration-001-temporal.sql | Temporal (valid_from/valid_to, searchAsOf) |
+| 002 | migration-002-decay.sql | 지수 감쇠 (last_decay_at) |
+| 003 | migration-003-api-keys.sql | api_keys + api_key_usage 테이블 |
+| 004 | migration-004-key-id.sql | fragments.key_id 컬럼 + FK |
+| 005 | migration-005-gc-columns.sql | GC 컬럼 |
+| 006 | migration-006-superseded.sql | superseded_by 제약 |
+| 007 | migration-007-link-weight.sql | link weight |
+| 008 | migration-008-morpheme.sql | 형태소 사전 |
+| 009 | migration-009-co-retrieved.sql | co_retrieved |
+| 010 | migration-010-ema.sql | EMA activation score |
+| 011 | migration-011-key-groups.sql | key groups (그룹별 파편 공유) |
+| 012 | migration-012-quality-verified.sql | quality_verified |
+| 013 | migration-013-search-events.sql | search_events 테이블 |
+| 014 | migration-014-ttl.sql | TTL 단기 계층 |
+| 015 | migration-015-created-at-index.sql | created_at 인덱스 |
+| 016 | migration-016-agent-topic-index.sql | agent/topic 인덱스 |
+| 017 | migration-017-episodic.sql | episodic 타입 (1000자, context_summary, session_id) |
+| 018 | migration-018-fragment-quota.sql | fragment quota (기본 5000개) |
+| 019 | migration-019-hnsw.sql | HNSW ef_construction 64→128, ef_search=80 |
+| 020 | migration-020-search-latency.sql | search_events 레이어 레이턴시 컬럼 |
+| 021 | migration-021-oauth.sql | OAuth clients 테이블 |
+| 022 | migration-022-temporal-link-check.sql | temporal 링크 타입 CHECK 제약 |
+| 023 | migration-023-link-weight-real.sql | fragment_links.weight integer→real |
+| 024 | migration-024-workspace.sql | fragments.workspace VARCHAR(255) NULL |
+| 025 | migration-025-case-columns.sql | fragments에 case_id + structured episode 컬럼 |
+| 026 | migration-026-case-events.sql | case_events + case_event_edges + fragment_evidence 테이블 |
+| 028 | migration-028-composite-indexes.sql | 복합 인덱스: (agent_id, topic, created_at DESC) topic fallback 검색 최적화, (key_id, agent_id, importance DESC) WHERE valid_to IS NULL API 키 격리 조회 최적화. migration-016의 idx_frag_agent_topic을 대체한다 |
 
 ---
 

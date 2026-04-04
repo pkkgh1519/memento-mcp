@@ -1,5 +1,25 @@
 # Internals
 
+## MemoryManager (조율 계층)
+
+v2.5.2에서 MemoryManager는 1790줄에서 904줄로 경량화되어, 도구 핸들러와 하위 모듈 간의 조율(orchestration) 계층으로 기능한다. 각 연산의 핵심 로직은 전담 모듈로 위임되며, MemoryManager는 의존성 주입과 메서드 라우팅만 담당한다.
+
+**분해된 모듈:**
+
+| 모듈 | 위임 대상 | 역할 |
+|------|----------|------|
+| `ContextBuilder` | `context()` | Core/Working/Anchor Memory 조합, rankedInjection, 컨텍스트 힌트 생성 |
+| `ReflectProcessor` | `reflect()` | summary/decisions/errors_resolved/new_procedures/open_questions 파편 변환·저장, episode 생성, Working Memory 정리 |
+| `BatchRememberProcessor` | `batchRemember()` | Phase A(유효성 검증) → Phase B(트랜잭션 INSERT) → Phase C(후처리) 3단계 일괄 저장 |
+| `QuotaChecker` | `remember()` 진입 시 | API 키별 파편 할당량(fragment_limit) 검사 |
+| `RememberPostProcessor` | `remember()` 완료 후 | 임베딩 생성, 형태소 인덱싱, 자동 링크, assertion 검사, 시간 링크, 평가 큐 투입 파이프라인 |
+
+**위임 패턴:** 각 모듈은 생성자에서 필요한 의존성(store, index, factory, 바인딩된 메서드 등)을 주입받는다. MemoryManager 생성자에서 `this.recall.bind(this)`, `this.remember.bind(this)` 형태로 자기 참조 메서드를 바인딩하여 전달하므로, 모듈이 MemoryManager를 역참조하지 않는다.
+
+**reflect의 resolution_status 자동 세팅:** ReflectProcessor는 reflect 생성 파편에 resolution_status를 자동 부여한다. `errors_resolved` 항목은 `resolutionStatus: "resolved"`로, `open_questions` 항목은 `resolutionStatus: "open"`으로 설정된다. 또한 모든 reflect 생성 파편에 `sessionId`가 전파되어 세션 단위 추적이 가능하다.
+
+---
+
 ## MemoryEvaluator
 
 서버가 시작되면 MemoryEvaluator 워커가 백그라운드에서 구동된다. `getMemoryEvaluator().start()`로 시작되는 싱글턴이다. SIGTERM/SIGINT 수신 시 graceful shutdown 흐름에서 중지된다.
@@ -35,6 +55,10 @@ memory_consolidate 도구가 실행되거나 서버 내부 스케줄러(6시간 
 13. **supersession 배치 감지**: 같은 topic + type이면서 임베딩 유사도 0.7~0.85 구간의 파편 쌍을 Gemini CLI로 "대체 관계인가?" 판단. 확정 시 superseded_by 링크 + valid_to 설정 + importance 반감. GraphLinker의 0.85 이상 구간과 상보적으로 동작
 14. **감쇠 적용 (EMA 동적 반감기)**: PostgreSQL `POWER()` 배치 SQL로 파편 전체에 지수 감쇠 적용. `ema_activation`이 높은 파편은 반감기가 최대 2배 연장(`computeDynamicHalfLife`). 공식: `importance × 2^(−Δt / (halfLife × clamp(1 + ema × 0.5, 1, 2)))`
 15. **EMA 배치 감쇠**: 장기 미접근 파편의 ema_activation을 주기적으로 축소한다. 60일 이상 미접근 → ema_activation=0(리셋), 30~60일 미접근 → ema_activation×0.5(절반). is_anchor=true 파편 제외. 검색 노출 감소 없이 접근 기록이 없는 파편의 EMA가 과거 부스트 값을 유지하는 현상을 방지한다
+
+### compressOldFragments (KNN 배치 병렬화)
+
+`ConsolidatorGC.compressOldFragments()`는 장기 미접근·저중요도 파편을 topic별로 그룹핑한 뒤 KNN(cosine >= 0.80)으로 유사 그룹을 형성하여 대표 파편으로 압축한다. v2.5.2에서 KNN 이웃 조회가 순차 N+1 쿼리에서 `BATCH_SIZE=20` 단위 `Promise.all` 병렬로 전환되었다. 배치 내 각 파편의 pgvector KNN 쿼리가 동시에 실행되므로, 대상 파편이 많을수록 처리 시간이 선형 대비 크게 단축된다. 개별 쿼리 실패는 `.catch(() => ({ rows: [] }))`로 격리되어 배치 전체를 차단하지 않는다.
 
 ---
 
@@ -73,6 +97,20 @@ SSE 스트림이 닫히면(`res.on('close')`) 서버는 SSE 응답 객체만 제
 ### SESSION_TTL 기본값 변경
 
 `SESSION_TTL` 환경변수의 기본값이 240분에서 43200분(30일)으로 변경되었다. 슬라이딩 윈도우 방식으로 도구 사용 시마다 TTL이 갱신되므로, 30일 비활동 후에만 만료된다. 활발히 사용 중인 세션은 사실상 만료되지 않는다.
+
+---
+
+## EmbeddingCache (쿼리 임베딩 캐시)
+
+`FragmentSearch._searchL3()`에서 쿼리 텍스트의 임베딩 벡터를 Redis에 캐싱하여 반복 검색 레이턴시를 감소시킨다.
+
+**키 패턴:** `emb:q:{SHA-256 앞 16자}`. 동일 쿼리 텍스트는 항상 같은 키에 매핑된다.
+
+**값 형식:** `Float32Array`를 `Buffer`로 바이너리 직렬화하여 저장. 조회 시 역직렬화하여 `number[]`로 반환.
+
+**TTL:** 기본 3600초(1시간). 생성자 `ttlSeconds` 옵션으로 조정 가능.
+
+**장애 격리:** 모든 Redis 호출은 try-catch로 감싸고, 실패 시 null/무시 반환. 캐시 장애가 검색 흐름을 차단하지 않는다. Redis 미설정(status === "stub") 시 항상 cache miss로 동작.
 
 ---
 
