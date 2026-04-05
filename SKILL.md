@@ -716,6 +716,167 @@ reflect(
 # → episode 파편 자동 생성 + preceded_by 엣지 자동 연결
 ```
 
+### 6. Case-based 작업 추적 — 복잡한 작업을 케이스 단위로 관리
+
+`caseId`를 중심으로 remember/recall/amend/reconstruct_history를 연계하면 복잡한 디버깅, 기능 구현, 장애 대응 등의 전체 흐름을 하나의 케이스로 추적할 수 있다.
+
+#### 케이스 생명주기
+
+```
+작업 시작 → caseId 부여 + goal + phase="planning" + resolutionStatus="open"
+  ↓
+진행 중   → 동일 caseId로 에러/발견/결정 기록 + phase 갱신
+  ↓
+완료      → amend로 resolutionStatus="resolved" + outcome 기록
+  ↓
+재구성    → reconstruct_history(caseId=...) 로 전체 흐름 + 인과 체인 조회
+```
+
+#### 1단계: 작업 시작 — 케이스 열기
+
+caseId는 `{작업유형}-{주제}-{날짜}` 형식을 권장한다.
+
+```
+remember(
+  content="nginx SSL 인증서 갱신 실패 조사 시작. certbot renew 실행 시 403 에러 발생.",
+  type="episode",
+  topic="nginx",
+  keywords=["nginx", "ssl", "certbot", "nerdvana"],
+  caseId="debug-nginx-ssl-2026-04-05",
+  goal="certbot SSL 인증서 갱신 403 에러 해결",
+  phase="planning",
+  resolutionStatus="open",
+  importance=0.8
+)
+```
+
+#### 2단계: 진행 중 — 발견/에러/결정 누적
+
+동일 `caseId`로 파편을 계속 추가한다. `phase`를 작업 단계에 맞게 갱신한다.
+
+```
+# 에러 원인 발견
+remember(
+  content="certbot 403 원인: nginx가 .well-known/acme-challenge를 proxy_pass로 넘기고 있었음. location 블록 우선순위 문제.",
+  type="error",
+  topic="nginx",
+  keywords=["nginx", "certbot", "acme-challenge", "location"],
+  caseId="debug-nginx-ssl-2026-04-05",
+  phase="debugging",
+  importance=0.8
+)
+
+# 해결 시도
+remember(
+  content="nginx에 location ^~ /.well-known/acme-challenge/ 블록을 proxy_pass 위에 추가하여 certbot 검증 경로를 직접 서빙하도록 수정.",
+  type="procedure",
+  topic="nginx",
+  keywords=["nginx", "certbot", "location", "acme-challenge"],
+  caseId="debug-nginx-ssl-2026-04-05",
+  phase="verification",
+  importance=0.8
+)
+```
+
+#### 3단계: 완료 — 케이스 닫기
+
+케이스의 첫 파편(또는 대표 파편)을 `amend`로 갱신한다.
+
+```
+amend(
+  id="첫_파편_id",
+  resolutionStatus="resolved",
+  outcome="nginx location 블록 우선순위 수정으로 certbot 갱신 성공. cron 재설정 완료."
+)
+```
+
+#### 4단계: 사후 재구성 — 전체 흐름 파악
+
+```
+reconstruct_history(caseId="debug-nginx-ssl-2026-04-05")
+```
+
+반환값:
+- `ordered_timeline`: 시간순 전체 파편
+- `causal_chains`: caused_by/resolved_by 인과 체인
+- `unresolved_branches`: 미해결 브랜치 (있다면)
+- `case_events`: 시맨틱 마일스톤 이벤트
+- `event_dag`: 이벤트 간 DAG 관계
+
+#### phase 권장 값
+
+| phase | 의미 | 전환 시점 |
+|-------|------|----------|
+| planning | 작업 계획/분석 | 케이스 시작 |
+| debugging | 원인 조사 | 에러 분석 시작 |
+| implementation | 구현/수정 | 코드 작성 시작 |
+| verification | 검증/테스트 | 수정 완료 후 |
+| resolved | 완료 | 검증 통과 |
+
+#### resolutionStatus 값
+
+| 상태 | 의미 |
+|------|------|
+| open | 진행 중 |
+| resolved | 해결 완료 |
+| abandoned | 포기/보류 |
+
+### 7. Assertion 신뢰도 관리 — 가설과 사실을 구분
+
+`assertionStatus`는 파편의 신뢰 수준을 4단계로 표현한다. 가설을 저장하고, 검증 후 상태를 갱신하여 기억의 신뢰도를 체계적으로 관리한다.
+
+#### 4단계 신뢰 모델
+
+| assertionStatus | 의미 | 사용 시점 |
+|-----------------|------|----------|
+| observed | 직접 확인한 사실 (기본값) | 로그/출력/테스트 결과로 확인한 것 |
+| inferred | 추론/가설 (검증 전) | "아마 이것이 원인일 것" — 아직 증명 안 됨 |
+| verified | 테스트/실행으로 확인 완료 | 수정 후 테스트 통과, 재현 확인 |
+| rejected | 틀린 것으로 판명 | 가설이 틀렸음을 확인 |
+
+#### 워크플로우: 가설 → 검증 → 확정
+
+```
+# 1. 가설 저장 (inferred)
+remember(
+  content="메모리 누수 원인은 EventListener 미해제로 추정. useEffect cleanup 누락 의심.",
+  type="error",
+  topic="frontend",
+  keywords=["memory-leak", "useEffect", "EventListener"],
+  assertionStatus="inferred",
+  caseId="debug-memleak-2026-04-05",
+  phase="debugging",
+  importance=0.7
+)
+# → frag-hypothesis-001
+
+# 2. 검증 성공 → verified로 갱신
+amend(
+  id="frag-hypothesis-001",
+  assertionStatus="verified",
+  content="메모리 누수 원인 확정: EventListener 미해제. useEffect cleanup에 removeEventListener 추가로 해결."
+)
+
+# 3. 만약 가설이 틀렸다면 → rejected
+amend(
+  id="frag-hypothesis-001",
+  assertionStatus="rejected",
+  content="EventListener 미해제는 원인이 아니었음. 프로파일러 확인 결과 클로저의 대형 객체 참조가 실제 원인."
+)
+```
+
+#### 활용 패턴
+
+검증 전 가설을 `inferred`로 저장하면:
+- 다음 세션에서 recall 시 해당 파편이 "아직 검증되지 않은 가설"임을 인지할 수 있다
+- 검증 후 `amend`로 `verified`/`rejected`를 명시하면 기억의 정확성이 보장된다
+- `rejected` 파편은 "이미 시도했지만 실패한 경로"로서 같은 실수를 반복하지 않게 한다
+
+recall 시 신뢰도 기반 판단:
+- `observed`/`verified` 파편: 신뢰하고 적용
+- `inferred` 파편: 참고하되 재검증 고려
+- `rejected` 파편: 이 경로는 이미 실패했으므로 다른 접근 필요
+
 ## 능동 활용 트리거
 
 사용자 요청 없이도 아래 신호를 감지하면 즉시 해당 도구를 선제 실행한다.
