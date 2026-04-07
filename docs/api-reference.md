@@ -184,6 +184,64 @@ API 키의 일일 호출 제한을 변경한다. 마스터 키 인증 필요.
 
 ---
 
+## MCP 도구 — recall
+
+### 파라미터
+
+| 이름 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| keywords | string[] | - | 키워드 검색 (L1→L2) |
+| text | string | - | 자연어 쿼리 (L3 시맨틱) |
+| topic | string | - | 주제 필터 |
+| type | string | - | 타입 필터 (episode 제외) |
+| tokenBudget | number | - | 최대 반환 토큰. 기본 1000. |
+| includeContext | boolean | - | context_summary + 인접 파편 포함 |
+| caseId | string | - | 케이스 ID 필터. 해당 케이스 파편만 반환. |
+| resolutionStatus | string | - | 해결 상태 필터 (open / resolved / abandoned) |
+| phase | string | - | 작업 단계 필터 (planning, debugging, verification 등) |
+| caseMode | boolean | - | CBR 모드. 유사 파편을 case_id별로 그루핑하여 (goal, events, outcome) 트리플로 반환. 과거 유사 작업 해결 사례 참조 시 사용. |
+| maxCases | number | - | caseMode에서 반환할 최대 케이스 수. 기본 5, 상한 10. |
+| depth | string | - | 검색 깊이 필터. "high-level" / "detail" / "tool-level". 상세 설명은 아래 참조. |
+| workspace | string | - | 검색 범위 제한. 지정 시 해당 workspace + 전역(NULL) 파편만 반환. |
+| contextText | string | - | 현재 대화 맥락 텍스트. 관련 파편을 선제적으로 활성화 (ENABLE_SPREADING_ACTIVATION=true 시). |
+| cursor | string | - | 페이지네이션 커서 |
+| pageSize | number | - | 기본 20, 최대 50 |
+| agentId | string | - | 에이전트 ID |
+
+### depth enum
+
+| 값 | 대상 유형 | 용도 |
+|----|----------|------|
+| `"high-level"` | decision, episode만 | Planner용. 전략 수립·방향 결정 시. |
+| `"detail"` | 전체 (기본값) | 일반 검색. 타입 제한 없음. |
+| `"tool-level"` | procedure, error, fact만 | Executor용. 구체적 실행 단계·설정값 조회 시. |
+
+### caseMode 응답 구조
+
+`caseMode=true` 시 일반 fragments 외에 `cases` 배열이 추가로 반환된다.
+
+```json
+{
+  "caseMode": true,
+  "cases": [{
+    "case_id": "abc-123",
+    "goal": "nginx 502 해결",
+    "outcome": "upstream 포트 불일치 수정",
+    "resolution_status": "resolved",
+    "events": [
+      {"event_type": "error_observed", "summary": "502 Bad Gateway"},
+      {"event_type": "fix_attempted", "summary": "nginx.conf 수정"},
+      {"event_type": "verification_passed", "summary": "200 OK 확인"}
+    ],
+    "fragment_count": 5,
+    "relevance_score": 3
+  }],
+  "caseCount": 1
+}
+```
+
+---
+
 ## 권장 사용 흐름
 
 1. 세션 시작 — `context()`로 핵심 기억을 로드한다. 선호, 에러 패턴, 절차가 복원된다. 미반영 세션이 있으면 힌트가 표시된다.

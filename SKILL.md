@@ -399,6 +399,9 @@ curl -s -X POST $SERVER_URL \
 | caseId | string | - | 케이스 ID 필터. 해당 케이스에 속한 파편만 반환. |
 | resolutionStatus | string | - | 해결 상태 필터 (open / resolved / abandoned) |
 | phase | string | - | 작업 단계 필터 (planning, debugging, verification 등) |
+| caseMode | boolean | - | true 시 CBR 모드. case_id별 (goal, events, outcome) 트리플로 반환 |
+| maxCases | number | - | caseMode 최대 케이스 수 (기본 5, 상한 10) |
+| depth | string | - | 검색 깊이. high-level(decision/episode), detail(전체), tool-level(procedure/error/fact) |
 
 ### forget
 
@@ -568,7 +571,7 @@ fragment_ids를 지정하고 ENABLE_RECONSOLIDATION=true인 경우: relevant=fal
 { "keyword": "authentication", "event_type": "error", "limit": 10 }
 ```
 
-## 자동 백그라운드 동작 (v2.5.6)
+## 자동 백그라운드 동작 (v2.5.7)
 
 다음 3개 기능은 별도 도구 호출 없이 자동으로 동작한다.
 
@@ -906,6 +909,23 @@ recall 시 신뢰도 기반 판단:
 - `inferred` 파편: 참고하되 재검증 고려
 - `rejected` 파편: 이 경로는 이미 실패했으므로 다른 접근 필요
 
+## CBR (Case-Based Reasoning) 활용
+
+### 유사 사례 검색
+
+과거 유사 작업의 해결 사례를 참조할 때 `recall(caseMode=true)` 사용:
+- 검색 결과 파편에서 case_id를 추출하여 케이스별 그루핑
+- 각 케이스를 (goal, events, outcome, resolution_status) 트리플로 반환
+- resolved 케이스가 우선 정렬
+
+### depth 필터 전략
+
+| depth | 대상 type | 용도 |
+|-------|----------|------|
+| high-level | decision, episode | Planner — 고수준 의사결정 참조 |
+| detail | 전체 (기본값) | 일반 검색 |
+| tool-level | procedure, error, fact | Executor — 구체적 실행 절차 참조 |
+
 ## 능동 활용 트리거
 
 사용자 요청 없이도 아래 신호를 감지하면 즉시 해당 도구를 선제 실행한다.
@@ -960,6 +980,14 @@ recall 또는 context 응답에 `_memento_hint` 필드가 있으면:
 | consider_context | 파편 5개 이상 | includeContext=true 재검색 |
 | active_errors | 미해결 error 파편 존재 | 각 파편 확인 후 forget |
 | empty_context | 저장된 기억 없음 | 세션 후 remember/reflect |
+
+### 능동 활용 트리거 테이블
+
+| 감지 신호 | 권장 도구 |
+|----------|----------|
+| "이전에 비슷한 문제를", "과거 사례" 언급 | recall(caseMode=true, text=관련 내용) |
+| Planner 역할로 고수준 계획 수립 | recall(depth="high-level") |
+| Executor 역할로 구체적 절차 참조 | recall(depth="tool-level") |
 
 ## 안티패턴
 
