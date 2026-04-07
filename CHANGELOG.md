@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.5.6] - 2026-04-07
+
+### Added
+- **ProactiveRecall**: remember() 호출 시 키워드 오버랩(>=50%) 기반 유사 파편 자동 `related_to` 링크 생성. RememberPostProcessor fire-and-forget 단계로 추가. (`b90cc83`)
+- **CaseRewardBackprop**: `verification_passed` / `verification_failed` case 이벤트 시 증거 파편 importance를 DB 원자적 UPDATE로 역전파. +0.15(passed, quality_verified=true) / -0.10(failed). CaseEventStore.append() fire-and-forget 훅. (`c15a03c`, `75ef107`)
+- **SearchParamAdaptor**: key_id x query_type x hour 조합별 minSimilarity 온라인 학습. 단일 원자적 UPSERT (TOCTOU-free). 대칭 학습률 -0.01/+0.01, 범위 [0.10, 0.60], MIN_SAMPLE=50. FragmentSearch._searchL3()에 통합. (`4271a3f`, `86bd4db`)
+- **migration-029**: `agent_memory.search_param_thresholds` 테이블 (key_id NOT NULL DEFAULT -1, UNIQUE(key_id, query_type, hour_bucket))
+
+### Fixed
+- CaseRewardBackprop: fragments 테이블에 `updated_at` 컬럼 없음 -> SET 절에서 제거 (`75ef107`)
+
 ## [2.5.3] - 2026-04-06
 
 ### Fixed
