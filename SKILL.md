@@ -236,11 +236,37 @@ remember(
 )
 ```
 
-## MCP 도구 사용 불가 시 curl 직접 호출
+## MCP 도구 사용 불가 시 curl 직접 호출 (기억 유실 방지 프로토콜)
 
-세션 컨텍스트 초과, 연결 끊김, 플랫폼 제한 등으로 remember/recall/context/reflect MCP 도구를 호출할 수 없을 때는 curl로 직접 HTTP 요청한다.
+절대 원칙: MCP 세션 연동이 끊기거나 도구 호출이 차단된 상황에서도 기억은 절대 유실되어선 안 된다. MCP 채널이 막히면 즉시 curl 직접 호출로 전환하여 reflect/remember를 우선 수행한다. "MCP가 안 되니 저장을 포기한다"는 선택지는 존재하지 않는다.
 
-서버 주소(`SERVER_URL`)와 `ACCESS_KEY`는 MCP 연결 설정(claude_desktop_config.json, .claude/settings.json 등)에서 확인한다.
+### 발동 조건 (다음 중 하나라도 해당하면 즉시 curl 폴백)
+
+- `mcp__*__remember` / `mcp__*__reflect` / `mcp__*__recall` / `mcp__*__context` 호출이 `Session not found`, `Session expired`, `Invalid session`, `connection closed`, `ECONNREFUSED`, `ETIMEDOUT`, `401`, `403` 중 하나로 실패
+- MCP 서버 재시작 직후 첫 도구 호출이 실패
+- 플랫폼(Claude.ai 웹, ChatGPT Connector 등)에서 MCP 도구 목록에 기억 도구가 노출되지 않음
+- OAuth 토큰 만료·갱신 실패로 MCP 툴이 회색 처리됨
+- 사용자가 "MCP 안 되네", "저장 안 돼", "recall 실패" 등을 언급
+- 동일 세션에서 기억 도구 호출이 2회 연속 실패
+
+### 의무 행동 순서 (위 조건 충족 즉시)
+
+1. 현재까지 중요 의사결정·에러 해결·새 사실을 내부 요약(수 문장)으로 휘발 전에 문자열로 확보
+2. curl `initialize` 호출로 `SESSION_ID` 재발급
+3. curl `reflect` 호출로 세션 핵심 내용 즉시 저장 (손실 최소화를 위해 remember보다 먼저 수행)
+4. 개별 사실/결정/에러가 있으면 curl `remember`로 타입별 분리 저장
+5. 작업 이어가기 위한 과거 맥락이 필요하면 curl `recall` 또는 `context`로 확보
+6. curl 성공·실패 결과를 사용자에게 한 줄 보고 후 원래 작업 재개
+7. MCP 도구가 복구되면 이후부터 다시 MCP 경로 사용. curl은 폴백 전용.
+
+### 금지 사항
+
+- MCP 실패를 이유로 저장을 연기·누락하는 행위
+- "다음 세션에서 다시 시도" 같은 지연 처리
+- MCP 실패 메시지를 사용자에게만 보고하고 curl 폴백을 시도조차 하지 않는 행위
+- curl 응답을 확인하지 않고 성공으로 간주하는 행위 (항상 JSON 응답의 `result` 또는 `error` 필드 확인)
+
+서버 주소(`SERVER_URL`)와 `ACCESS_KEY`는 MCP 연결 설정(claude_desktop_config.json, .claude/settings.json 등)에서 확인한다. 찾을 수 없으면 사용자에게 1회 질의하여 즉시 확보한다.
 
 ```bash
 # Step 1: 세션 초기화 (SESSION_ID 획득 — 이후 모든 요청에 필요)
@@ -260,8 +286,7 @@ curl -s -X POST $SERVER_URL \
     "agentId":"AGENT_ID",
     "summary":["요약 내용1","요약 내용2"],
     "decisions":["기술/아키텍처 결정사항"],
-    "errors_resolved":["원인: X → 해결: Y"],
-    "keywords":["프로젝트명","호스트명"]
+    "errors_resolved":["원인: X → 해결: Y"]
   }}}'
 
 # remember — 단일 파편 저장
@@ -272,6 +297,7 @@ curl -s -X POST $SERVER_URL \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"remember","arguments":{
     "agentId":"AGENT_ID",
     "content":"저장할 내용",
+    "topic":"주제",
     "type":"fact",
     "importance":0.7,
     "keywords":["키워드"]
@@ -284,7 +310,7 @@ curl -s -X POST $SERVER_URL \
   -H "MCP-Session-Id: $SESSION_ID" \
   -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"recall","arguments":{
     "agentId":"AGENT_ID",
-    "query":"검색어",
+    "text":"검색어",
     "keywords":["키워드"]
   }}}'
 
@@ -304,6 +330,12 @@ curl -s -X POST $SERVER_URL \
 # 위 명령 끝에 파이프로 추가
 | python3 -c "import sys,json; r=json.load(sys.stdin); print(r['result']['content'][0]['text'])"
 ```
+
+curl 응답 검증 체크:
+- HTTP 200 + `result` 필드 존재 → 성공
+- `error.code` 존재 → 메시지 파싱 후 재시도 또는 사용자 보고
+- `error.code === -32001` 또는 `-32002` (세션 관련) → `initialize`부터 다시 수행
+- 응답 본문이 비어 있거나 파싱 실패 → 네트워크·방화벽 문제, `SERVER_URL`과 포트 노출 상태 확인
 
 ## 다중 플랫폼/디바이스 기억 관리
 
@@ -383,7 +415,7 @@ curl -s -X POST $SERVER_URL \
 | type | string | - | 타입 필터 (episode 제외. episode는 text/topic으로 검색) |
 | tokenBudget | number | - | 최대 반환 토큰. 기본 1000. |
 | includeLinks | boolean | - | 연결 파편 포함. 기본 true. |
-| linkRelationType | string | - | 연결 관계 필터 |
+| linkRelationType | string | - | 연결 관계 필터 (related, caused_by, resolved_by, part_of, contradicts) |
 | threshold | number | - | similarity 임계값 0~1 |
 | includeSuperseded | boolean | - | 만료 파편 포함. 기본 false. |
 | asOf | string | - | ISO 8601. 특정 시점 기준 유효 파편만. |
@@ -401,6 +433,8 @@ curl -s -X POST $SERVER_URL \
 | phase | string | - | 작업 단계 필터 (planning, debugging, verification 등) |
 | caseMode | boolean | - | true 시 CBR 모드. case_id별 (goal, events, outcome) 트리플로 반환 |
 | maxCases | number | - | caseMode 최대 케이스 수 (기본 5, 상한 10) |
+| minImportance | number | - | 최소 중요도 필터 (0~1). 이 값 이상의 importance만 반환. |
+| isAnchor | boolean | - | true 시 앵커(고정) 파편만 반환 |
 | depth | string | - | 검색 깊이. high-level(decision/episode), detail(전체), tool-level(procedure/error/fact) |
 
 ### forget
@@ -419,6 +453,7 @@ curl -s -X POST $SERVER_URL \
 | fromId | string | O | 시작 파편 ID |
 | toId | string | O | 대상 파편 ID |
 | relationType | string | - | related(기본), caused_by, resolved_by, part_of, contradicts |
+| weight | number | - | 관계 가중치 (0-1, 기본 1) |
 | agentId | string | - | 에이전트 ID |
 
 ### amend
@@ -435,6 +470,7 @@ curl -s -X POST $SERVER_URL \
 | importance | number | - | 새 중요도 |
 | isAnchor | boolean | - | 고정 여부 |
 | supersedes | boolean | - | 기존 파편 대체 |
+| assertionStatus | string | - | 확인 상태 변경 (observed, inferred, verified, rejected) |
 | agentId | string | - | 에이전트 ID |
 
 ### reflect
@@ -449,6 +485,7 @@ curl -s -X POST $SERVER_URL \
 | errors_resolved | string[] | - | 해결 에러 ('원인: X -> 해결: Y') |
 | new_procedures | string[] | - | 확립된 절차 |
 | open_questions | string[] | - | 미해결 질문 |
+| narrative_summary | string | - | 3~5문장 서사 요약. episode 파편으로 저장되어 세션 연속성에 기여. |
 | task_effectiveness | object | - | {overall_success, tool_highlights[], tool_pain_points[]} |
 | agentId | string | - | 에이전트 ID |
 
@@ -533,6 +570,7 @@ fragment_ids를 지정하고 ENABLE_RECONSOLIDATION=true인 경우: relevant=fal
 | timeRange | object | - | { from: ISO8601, to: ISO8601 } 시간 범위 |
 | query | string | - | content 키워드 추가 필터 |
 | limit | number | 100 | 최대 반환 파편 수 (최대 500) |
+| workspace | string | - | 워크스페이스 필터 |
 
 반환값:
 - `ordered_timeline`: 시간순 파편 배열
