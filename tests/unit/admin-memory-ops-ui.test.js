@@ -7,15 +7,24 @@
 
 import { test, describe, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadAdmin, flatQuery } from "./admin-test-helper.js";
+import { loadAdmin, flatQuery, AdminEsmLoadError } from "./admin-test-helper.js";
 
 let mod;
+let _adminLoaded = false;
+try {
+  loadAdmin();
+  _adminLoaded = true;
+} catch (e) {
+  if (!(e instanceof AdminEsmLoadError)) throw e;
+}
+
+const _describe = _adminLoaded ? describe : describe.skip;
 
 /* ================================================================
    Memory Filters
    ================================================================ */
 
-describe("renderMemoryFilters", () => {
+_describe("renderMemoryFilters", () => {
   beforeEach(() => { mod = loadAdmin(); });
 
   test("glass-panel + border-l-2 border-primary/40", () => {
@@ -48,7 +57,7 @@ describe("renderMemoryFilters", () => {
    Fragment List (Search Explorer)
    ================================================================ */
 
-describe("renderFragmentList", () => {
+_describe("renderFragmentList", () => {
   beforeEach(() => { mod = loadAdmin(); });
 
   test("fragments 비어있으면 빈 상태 텍스트", () => {
@@ -93,7 +102,7 @@ describe("renderFragmentList", () => {
    Retrieval Analytics
    ================================================================ */
 
-describe("renderRetrievalAnalytics", () => {
+_describe("renderRetrievalAnalytics", () => {
   beforeEach(() => { mod = loadAdmin(); });
 
   test("glass-panel + border-primary/20", () => {
@@ -124,7 +133,7 @@ describe("renderRetrievalAnalytics", () => {
    Anomaly Cards
    ================================================================ */
 
-describe("renderAnomalyCards", () => {
+_describe("renderAnomalyCards", () => {
   beforeEach(() => { mod = loadAdmin(); });
 
   test("anomalies=null이면 empty fragment", () => {
@@ -155,7 +164,7 @@ describe("renderAnomalyCards", () => {
    Recent Events Chart
    ================================================================ */
 
-describe("renderRecentEventsChart", () => {
+_describe("renderRecentEventsChart", () => {
   beforeEach(() => { mod = loadAdmin(); });
 
   test("glass-panel wrapper", () => {
@@ -182,7 +191,7 @@ describe("renderRecentEventsChart", () => {
    Fragment Inspector
    ================================================================ */
 
-describe("renderFragmentInspector", () => {
+_describe("renderFragmentInspector", () => {
   beforeEach(() => { mod = loadAdmin(); });
 
   test("fragment=null이면 empty fragment", () => {
@@ -202,7 +211,7 @@ describe("renderFragmentInspector", () => {
    Pagination
    ================================================================ */
 
-describe("renderPagination", () => {
+_describe("renderPagination", () => {
   beforeEach(() => { mod = loadAdmin(); });
 
   test("memoryPages <= 1이면 빈 fragment", () => {

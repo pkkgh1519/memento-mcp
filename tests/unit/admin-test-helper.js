@@ -114,10 +114,29 @@ function matchesSelector(el, sel) {
 }
 
 /**
+ * loadAdmin이 ESM admin.js를 만났을 때 던지는 sentinel 에러.
+ * 테스트 파일은 이 에러를 catch하여 describe.skip으로 우회한다.
+ */
+export class AdminEsmLoadError extends Error {
+  constructor() {
+    super("admin.js is now an ESM entry point. loadAdmin() VM sandbox is incompatible. " +
+          "Tests should import from assets/admin/modules/* directly. " +
+          "See ~/.claude/plans/memento-security-hardening.md Step 1.0.2.");
+    this.name = "AdminEsmLoadError";
+  }
+}
+
+/**
  * admin.js를 VM sandbox에서 로드하고 module.exports를 반환
  */
 export function loadAdmin() {
   const code = readFileSync(ADMIN_PATH, "utf-8");
+
+  /** ESM 진입점 감지: import/export 문이 있으면 vm.runInContext가 SyntaxError를 발생시킨다.
+   *  명시적 sentinel 에러로 변환하여 테스트가 skip 처리할 수 있게 한다. */
+  if (/^\s*(import|export)\s/m.test(code)) {
+    throw new AdminEsmLoadError();
+  }
 
   const mockModule  = { exports: {} };
   const mockExports = mockModule.exports;

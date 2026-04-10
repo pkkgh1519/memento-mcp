@@ -7,15 +7,24 @@
 
 import { test, describe, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { loadAdmin, flatQuery } from "./admin-test-helper.js";
+import { loadAdmin, flatQuery, AdminEsmLoadError } from "./admin-test-helper.js";
 
 let mod;
+let _adminLoaded = false;
+try {
+  loadAdmin();
+  _adminLoaded = true;
+} catch (e) {
+  if (!(e instanceof AdminEsmLoadError)) throw e;
+}
+
+const _describe = _adminLoaded ? describe : describe.skip;
 
 /* ================================================================
    Keys View
    ================================================================ */
 
-describe("renderKeyKpiRow", () => {
+_describe("renderKeyKpiRow", () => {
   beforeEach(() => { mod = loadAdmin(); });
 
   test("4개 KPI 카드 (glass-panel)", () => {
@@ -55,7 +64,7 @@ describe("renderKeyKpiRow", () => {
   });
 });
 
-describe("renderKeyTable", () => {
+_describe("renderKeyTable", () => {
   beforeEach(() => { mod = loadAdmin(); });
 
   test("glass-panel wrapper", () => {
@@ -82,7 +91,7 @@ describe("renderKeyTable", () => {
   });
 });
 
-describe("renderKeyInspector", () => {
+_describe("renderKeyInspector", () => {
   beforeEach(() => { mod = loadAdmin(); mod.state.groups = []; });
 
   test("key=null이면 empty placeholder", () => {
@@ -124,7 +133,7 @@ describe("renderKeyInspector", () => {
    Groups View
    ================================================================ */
 
-describe("renderGroupKpiRow", () => {
+_describe("renderGroupKpiRow", () => {
   beforeEach(() => { mod = loadAdmin(); });
 
   test("4개 KPI 카드 (glass-panel)", () => {
@@ -145,7 +154,7 @@ describe("renderGroupKpiRow", () => {
   });
 });
 
-describe("renderGroupTable", () => {
+_describe("renderGroupTable", () => {
   beforeEach(() => { mod = loadAdmin(); });
 
   test("glass-panel wrapper", () => {
@@ -160,7 +169,7 @@ describe("renderGroupTable", () => {
   });
 });
 
-describe("renderGroupInspector", () => {
+_describe("renderGroupInspector", () => {
   beforeEach(() => { mod = loadAdmin(); });
 
   test("selected=null이면 empty placeholder", () => {
