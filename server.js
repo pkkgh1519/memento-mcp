@@ -13,7 +13,7 @@
 import http from "http";
 
 /** 설정 */
-import { PORT, ACCESS_KEY, SESSION_TTL_MS, LOG_DIR, RATE_LIMIT_WINDOW_MS, RATE_LIMIT_PER_IP, RATE_LIMIT_PER_KEY, detectPgvectorSchema, PGVECTOR_SCHEMA } from "./lib/config.js";
+import { PORT, ACCESS_KEY, SESSION_TTL_MS, LOG_DIR, RATE_LIMIT_WINDOW_MS, RATE_LIMIT_PER_IP, RATE_LIMIT_PER_KEY, detectPgvectorSchema, PGVECTOR_SCHEMA, ENABLE_OPENAPI } from "./lib/config.js";
 import { MEMORY_CONFIG }          from "./config/memory.js";
 import { validateMemoryConfig }   from "./config/validate-memory-config.js";
 
@@ -43,6 +43,10 @@ import { startSchedulers } from "./lib/scheduler.js";
 
 /** Reranker 사전 로드 */
 import { preloadReranker } from "./lib/memory/Reranker.js";
+
+/** OpenAPI */
+import { validateAuthentication } from "./lib/auth.js";
+import { buildSpec }              from "./lib/openapi.js";
 
 /** HTTP 핸들러 */
 import {
@@ -94,6 +98,29 @@ const server = http.createServer(async (req, res) => {
   /* GET /health */
   if (req.method === "GET" && url.pathname === "/health") {
     await handleHealth(req, res, startTime);
+    return;
+  }
+
+  /* GET /openapi.json */
+  if (req.method === "GET" && url.pathname === "/openapi.json") {
+    if (!ENABLE_OPENAPI) {
+      res.statusCode = 404;
+      res.end("Not Found");
+      return;
+    }
+    const auth = await validateAuthentication(req, null);
+    if (!auth.valid) {
+      res.statusCode = 401;
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.end(JSON.stringify({ error: auth.error || "Unauthorized" }));
+      return;
+    }
+    const isMaster = auth.keyId == null;
+    const spec     = buildSpec(isMaster, isMaster ? null : (auth.permissions ?? []));
+    res.statusCode = 200;
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache");
+    res.end(JSON.stringify(spec));
     return;
   }
 
