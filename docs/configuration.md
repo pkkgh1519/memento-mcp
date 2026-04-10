@@ -23,17 +23,20 @@
 | OAUTH_ALLOWED_REDIRECT_URIS | (없음) | OAuth redirect_uri 정확 일치 허용 목록 (쉼표 구분). OAUTH_TRUSTED_ORIGINS와 별도로 동작 |
 | DEFAULT_DAILY_LIMIT | 10000 | API 키 생성 시 기본 일일 호출 한도 |
 | DEFAULT_PERMISSIONS | read,write | API 키 생성 시 기본 권한 |
-| DEFAULT_FRAGMENT_LIMIT | (없음) | API 키 생성 시 기본 파편 할당량. 미설정 시 무제한 |
+| DEFAULT_FRAGMENT_LIMIT | (없음) | API 키 생성 시 기본 파편 할당량. 미설정 시 무제한. `FRAGMENT_DEFAULT_LIMIT`과 동일 (하위 호환) |
 | DEDUP_BATCH_SIZE | 100 | 시맨틱 중복 제거 배치 크기 |
 | DEDUP_MIN_FRAGMENTS | 5 | dedup 최소 파편 수. 이 수 미만이면 중복 제거를 건너뛴다 |
 | COMPRESS_AGE_DAYS | 30 | 기억 압축 대상 비활성 일수 |
 | COMPRESS_MIN_GROUP | 3 | 압축 그룹 최소 크기. 이 수 미만이면 압축하지 않는다 |
 | RERANKER_ENABLED | false | cross-encoder reranking 활성화. true 시 recall 결과를 cross-encoder로 재순위화 |
 | RERANKER_MODEL | minilm | in-process 모드 ONNX 모델 선택. `minilm` (기본값, ~80MB, 영어 전용) 또는 `bge-m3` (~280MB, 다국어). **비영어권 사용자는 `bge-m3` 권장** — minilm은 영어 MS MARCO 데이터셋으로만 학습되어 한국어 등 비영어 파편 재순위화 품질이 저하됨. |
-| FRAGMENT_DEFAULT_LIMIT | 5000 | 새 API 키 생성 시 기본 파편 할당량 (기본: 5000, NULL=무제한) |
+| FRAGMENT_DEFAULT_LIMIT | 5000 | 새 API 키 생성 시 기본 파편 할당량 (기본: 5000, NULL=무제한). `DEFAULT_FRAGMENT_LIMIT`과 동일 (하위 호환) |
 | ENABLE_RECONSOLIDATION | false | ReconsolidationEngine 활성화. true 시 tool_feedback과 contradicts 감지 시 fragment_links weight/confidence를 동적 갱신한다 |
 | ENABLE_SPREADING_ACTIVATION | false | SpreadingActivation 활성화. true 시 recall의 contextText 파라미터로 관련 파편을 선제적 활성화한다. 레이턴시 영향 측정 후 활성화 권장 |
 | ENABLE_PATTERN_ABSTRACTION | false | 패턴 추상화 활성화. 데이터 충분 축적 후 활성화 예정 (현재 미구현) |
+| ADMIN_ALLOWED_ORIGINS | (없음) | Admin UI 허용 origin 목록 (쉼표 구분). 미설정 시 ALLOWED_ORIGINS 값 사용 |
+| LOG_LEVEL | info | Winston 로깅 레벨 (`error` \| `warn` \| `info` \| `debug`) |
+| WORKER_ID | single | 멀티 프로세스 환경 워커 식별자. 로그와 Redis 키에 포함되어 워커 간 구분에 사용 |
 
 #### OAuth 토큰 TTL
 
@@ -563,7 +566,9 @@ EMBEDDING_DIMENSIONS=768
 | 024 | migration-024-workspace.sql | fragments.workspace VARCHAR(255) NULL |
 | 025 | migration-025-case-columns.sql | fragments에 case_id + structured episode 컬럼 |
 | 026 | migration-026-case-events.sql | case_events + case_event_edges + fragment_evidence 테이블 |
-| 028 | migration-028-composite-indexes.sql | 복합 인덱스: (agent_id, topic, created_at DESC) topic fallback 검색 최적화, (key_id, agent_id, importance DESC) WHERE valid_to IS NULL API 키 격리 조회 최적화. migration-016의 idx_frag_agent_topic을 대체한다 |
+| 027 | migration-027-v25-reconsolidation-episode-spreading.sql | search_events/case_events key_id 타입 수정, fragment_links 재통합 컬럼 + link_reconsolidations, case_events idempotency_key, fragments.keywords GIN 인덱스 |
+| 028 | migration-028-v253-improvements.sql | 복합 인덱스: (agent_id, topic, created_at DESC) topic fallback 검색 최적화, (key_id, agent_id, importance DESC) WHERE valid_to IS NULL API 키 격리 조회 최적화. migration-016의 idx_frag_agent_topic을 대체한다 |
+| 029 | migration-029-search-param-thresholds.sql | search_param_thresholds 테이블 (SearchParamAdaptor 온라인 학습 저장소, key_id NOT NULL DEFAULT -1) |
 
 ---
 

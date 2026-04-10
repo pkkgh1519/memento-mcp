@@ -193,9 +193,17 @@ API 키의 일일 호출 제한을 변경한다. 마스터 키 인증 필요.
 | keywords | string[] | - | 키워드 검색 (L1→L2) |
 | text | string | - | 자연어 쿼리 (L3 시맨틱) |
 | topic | string | - | 주제 필터 |
-| type | string | - | 타입 필터 (episode 제외) |
+| type | string | - | 타입 필터 (fact, decision, error, preference, procedure, relation, episode) |
 | tokenBudget | number | - | 최대 반환 토큰. 기본 1000. |
+| includeLinks | boolean | - | 연결된 파편 포함 (1-hop, resolved_by/caused_by 우선). 기본 true. |
+| linkRelationType | string | - | 연결 파편 관계 유형 필터 (related, caused_by, resolved_by, part_of, contradicts) |
+| threshold | number | - | similarity 임계값 (0~1) |
+| includeSuperseded | boolean | - | 만료(superseded) 파편 포함. 기본 false. |
+| asOf | string | - | ISO 8601. 특정 시점 기준 유효 파편만. |
+| excludeSeen | boolean | - | context()에서 이미 주입된 파편 제외. 기본 true. |
+| includeKeywords | boolean | - | 각 파편의 keywords 배열을 응답에 포함 |
 | includeContext | boolean | - | context_summary + 인접 파편 포함 |
+| timeRange | object | - | {from, to} 시간 범위 필터 (ISO 8601 또는 자연어) |
 | caseId | string | - | 케이스 ID 필터. 해당 케이스 파편만 반환. |
 | resolutionStatus | string | - | 해결 상태 필터 (open / resolved / abandoned) |
 | phase | string | - | 작업 단계 필터 (planning, debugging, verification 등) |
@@ -207,6 +215,8 @@ API 키의 일일 호출 제한을 변경한다. 마스터 키 인증 필요.
 | cursor | string | - | 페이지네이션 커서 |
 | pageSize | number | - | 기본 20, 최대 50 |
 | agentId | string | - | 에이전트 ID |
+| minImportance | number | - | 최소 중요도 필터 (0~1). 이 값 이상의 importance를 가진 파편만 반환. |
+| isAnchor | boolean | - | true 시 앵커(고정) 파편만 반환. 핵심 지식 조회에 유용. |
 
 ### depth enum
 
@@ -239,6 +249,270 @@ API 키의 일일 호출 제한을 변경한다. 마스터 키 인증 필요.
   "caseCount": 1
 }
 ```
+
+#### event_type enum
+
+| 값 | 설명 |
+|----|------|
+| `milestone_reached` | 주요 마일스톤 달성 |
+| `hypothesis_proposed` | 가설 제안 |
+| `hypothesis_rejected` | 가설 기각 |
+| `decision_committed` | 의사결정 확정 |
+| `error_observed` | 에러 관측 |
+| `fix_attempted` | 수정 시도 |
+| `verification_passed` | 검증 통과 |
+| `verification_failed` | 검증 실패 |
+
+---
+
+## MCP 도구 — remember
+
+파편 기반 기억 저장. 반드시 1~2문장 단위의 원자적 사실 하나만 저장한다. 내용이 많으면 여러 번 호출하여 각각 저장할 것.
+
+### 파라미터
+
+| 이름 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| content | string | O | 기억할 내용 (1~3문장, 300자 이내 권장) |
+| topic | string | O | 주제 (예: database, email, deployment, security) |
+| type | string | O | 파편 유형. fact, decision, error, preference, procedure, relation, episode. episode 외 타입은 300자 초과 시 절삭. |
+| keywords | string[] | - | 검색용 키워드 (미입력 시 자동 추출) |
+| importance | number | - | 중요도 0~1 (미입력 시 type별 기본값) |
+| source | string | - | 출처 (세션 ID, 도구명 등) |
+| linkedTo | string[] | - | 연결할 기존 파편 ID 목록 |
+| scope | string | - | 저장 범위. permanent=장기 기억(기본), session=세션 워킹 메모리(세션 종료 시 소멸) |
+| isAnchor | boolean | - | 중요 파편 고정 여부. true 시 중요도 감쇠(decay) 및 만료 삭제 대상에서 제외됨. |
+| supersedes | string[] | - | 대체할 기존 파편 ID 목록. 지정된 파편은 valid_to가 설정되고 importance가 반감된다. |
+| contextSummary | string | - | 이 기억이 생긴 맥락/배경 요약 (1-2문장). recall 시 함께 반환되어 전후관계를 복원한다. |
+| sessionId | string | - | 현재 세션 ID. 같은 세션 파편을 시간 인접 번들로 묶는 데 사용. |
+| workspace | string | - | 워크스페이스 이름. 미지정 시 키의 default_workspace 적용. |
+| agentId | string | - | 에이전트 ID (RLS 격리용) |
+| caseId | string | - | 이 파편이 속한 작업/케이스 식별자. 미설정 시 현재 session_id로 자동 설정. |
+| goal | string | - | 에피소드 파편의 목표 (episode 타입 권장) |
+| outcome | string | - | 에피소드 파편의 결과 |
+| phase | string | - | 작업 단계 (예: planning, debugging, verification) |
+| resolutionStatus | string | - | 작업 해결 상태 (open, resolved, abandoned) |
+| assertionStatus | string | - | 파편의 신뢰도 수준 (observed, inferred, verified, rejected). 기본값: observed |
+
+---
+
+## MCP 도구 — batch_remember
+
+여러 파편을 한번에 저장 (대량 기억 입력용). 단일 트랜잭션으로 최대 200건을 일괄 INSERT하여 HTTP 라운드트립을 최소화한다.
+
+### 파라미터
+
+| 이름 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| fragments | object[] | O | 저장할 파편 배열 (최대 200건). 각 항목은 content(string, 필수), topic(string, 필수), type(string, 필수), importance(number), keywords(string[]), workspace(string) 포함. |
+| workspace | string | - | 배치 기본 워크스페이스. 개별 파편에 workspace 미지정 시 이 값으로 대체. 미지정 시 키의 default_workspace 적용. |
+| agentId | string | - | 에이전트 ID (RLS 격리용) |
+
+---
+
+## MCP 도구 — forget
+
+파편 기억 삭제. id 또는 topic 중 하나는 필수. permanent 계층 파편은 force 옵션이 필요.
+
+### 파라미터
+
+| 이름 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| id | string | - | 삭제할 파편 ID |
+| topic | string | - | 해당 주제의 파편 전체 삭제 |
+| force | boolean | - | permanent 파편도 강제 삭제 (기본 false) |
+| agentId | string | - | 에이전트 ID |
+
+---
+
+## MCP 도구 — link
+
+두 파편 사이에 관계를 설정한다. 인과, 해결, 구성, 모순 관계를 명시.
+
+### 파라미터
+
+| 이름 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| fromId | string | O | 시작 파편 ID |
+| toId | string | O | 대상 파편 ID |
+| relationType | string | - | 관계 유형 (related, caused_by, resolved_by, part_of, contradicts). 기본 related. |
+| agentId | string | - | 에이전트 ID |
+| weight | number | - | 관계 가중치 (0-1, 기본 1) |
+
+---
+
+## MCP 도구 — amend
+
+기존 파편의 내용이나 메타데이터를 갱신한다. ID와 링크를 보존하면서 선택적으로 수정.
+
+### 파라미터
+
+| 이름 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| id | string | O | 갱신 대상 파편 ID |
+| content | string | - | 새 내용 (300자 초과 시 절삭) |
+| topic | string | - | 새 주제 |
+| keywords | string[] | - | 새 키워드 목록 |
+| type | string | - | 새 유형 (fact, decision, error, preference, procedure, relation) |
+| importance | number | - | 새 중요도 (0~1) |
+| isAnchor | boolean | - | 고정 파편 여부 설정 |
+| supersedes | boolean | - | true 시 기존 파편을 명시적으로 대체 (superseded_by 링크 생성 및 중요도 하향) |
+| assertionStatus | string | - | 파편의 확인 상태 변경 (observed, inferred, verified, rejected). case_id가 있는 파편은 변경 시 verification_passed/verification_failed 이벤트가 자동 기록된다. |
+| agentId | string | - | 에이전트 ID |
+
+---
+
+## MCP 도구 — reflect
+
+세션 종료 시 학습 내용을 원자 파편으로 영속화한다. 각 배열 항목이 독립 파편으로 저장되므로 항목 하나에 하나의 사실/결정/절차만 담을 것.
+
+### 파라미터
+
+| 이름 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| summary | string \| string[] | - | 세션 개요 파편 목록. 배열 권장. 항목 1개 = 사실 1건 (1~2문장). |
+| sessionId | string | - | 세션 ID. 전달 시 같은 세션의 파편만 종합하여 reflect 수행. |
+| decisions | string[] | - | 기술/아키텍처 결정 목록. 항목 1개 = 결정 1건. |
+| errors_resolved | string[] | - | 해결된 에러 목록. '원인: X → 해결: Y' 형식 권장. |
+| new_procedures | string[] | - | 확립된 절차/워크플로우 목록. 항목 1개 = 절차 1개. |
+| open_questions | string[] | - | 미해결 질문 목록. 항목 1개 = 질문 1건. |
+| narrative_summary | string | - | 세션 전체를 3~5문장의 서사(narrative)로 요약. episode 파편으로 저장되어 세션 간 맥락 연속성에 기여. 생략 시 summary에서 자동 생성. |
+| agentId | string | - | 에이전트 ID |
+| task_effectiveness | object | - | 세션 도구 사용 효과성 종합 평가. overall_success(boolean), tool_highlights(string[]), tool_pain_points(string[]) 포함. |
+
+---
+
+## MCP 도구 — context
+
+Core Memory + Working Memory + session_reflect를 분리 로드한다. 세션 시작 시 preference, error, procedure, decision 파편을 주입하여 맥락 유지.
+
+### 파라미터
+
+| 이름 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| tokenBudget | number | - | 최대 토큰 수 (기본 2000) |
+| types | string[] | - | 로드할 유형 목록 (기본: preference, error, procedure) |
+| sessionId | string | - | 세션 ID (Working Memory 로드용) |
+| agentId | string | - | 에이전트 ID |
+| workspace | string | - | 워크스페이스 필터. 지정 시 해당 workspace 파편 + 전역(NULL) 파편만 반환. 미지정 시 키의 default_workspace 적용. |
+| structured | boolean | - | true 시 계층적 트리 구조 반환, false/미지정 시 기존 flat list (기본값: false) |
+
+---
+
+## MCP 도구 — tool_feedback
+
+도구 사용 결과에 대한 유용성 피드백. 대상 도구의 결과가 관련성 있었는지, 충분했는지를 평가한다.
+
+### 파라미터
+
+| 이름 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| tool_name | string | O | 평가 대상 도구명 |
+| relevant | boolean | O | 결과가 요청 의도와 관련 있었는가 |
+| sufficient | boolean | O | 결과가 작업 완료에 충분했는가 |
+| suggestion | string | - | 개선 제안 (100자 이내) |
+| context | string | - | 사용 맥락 요약 (50자 이내) |
+| session_id | string | - | 세션 ID |
+| trigger_type | string | - | 트리거 유형. sampled=훅 샘플링, voluntary=AI 자발적 (기본 voluntary) |
+| search_event_id | integer | - | 직전 recall이 반환한 _searchEventId. 검색 품질 분석에 사용. |
+| fragment_ids | string[] | - | 피드백 대상 파편 ID 목록. 제공 시 해당 파편의 활성화 점수가 피드백에 따라 조정된다. |
+
+---
+
+## MCP 도구 — memory_stats
+
+파편 기억 시스템 통계 조회. 전체 파편 수, TTL 분포, 유형별 통계를 반환한다.
+
+### 파라미터
+
+파라미터 없음.
+
+---
+
+## MCP 도구 — memory_consolidate
+
+파편 기억 유지보수 실행. TTL 전환, 중요도 감쇠, 만료 삭제, 중복 병합을 수행한다.
+
+### 파라미터
+
+파라미터 없음.
+
+---
+
+## MCP 도구 — graph_explore
+
+에러 파편 기점으로 인과 관계 체인을 추적한다. RCA(Root Cause Analysis) 전용. caused_by, resolved_by 관계를 1-hop 추적하여 에러 원인과 해결 절차를 연결한다.
+
+### 파라미터
+
+| 이름 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| startId | string | O | 시작 파편 ID (error 파편 권장) |
+| agentId | string | - | 에이전트 ID |
+
+---
+
+## MCP 도구 — fragment_history
+
+파편의 전체 변경 이력 조회. amend로 수정된 이전 버전과 superseded_by 체인을 반환한다.
+
+### 파라미터
+
+| 이름 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| id | string | O | 조회할 파편 ID |
+
+---
+
+## MCP 도구 — get_skill_guide
+
+Memento MCP 최적 활용 가이드를 반환한다. 기억 도구 사용법, 세션 생명주기, 키워드 규칙, 검색 전략, 경험적 기억 활용법 등 포괄적 스킬 레퍼런스.
+
+### 파라미터
+
+| 이름 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| section | string | - | 특정 섹션만 조회. 미지정 시 전체 가이드 반환. 가능한 값: overview, lifecycle, keywords, search, episode, multiplatform, tools, importance, experiential, triggers, antipatterns |
+
+---
+
+## MCP 도구 — reconstruct_history
+
+case_id 또는 entity 기반으로 작업 히스토리를 시간순으로 재구성한다. 인과 체인과 미해결 브랜치를 포함하여 서사를 복원한다.
+
+### 파라미터
+
+| 이름 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| caseId | string | - | 재구성할 케이스 식별자 |
+| entity | string | - | entity_key 필터 (caseId 없을 때 사용) |
+| timeRange | object | - | ISO 8601 시간 범위. from(시작 시각), to(종료 시각) 포함. |
+| query | string | - | 추가 키워드 필터 |
+| limit | number | - | 기본 100, 최대 500 |
+| workspace | string | - | 워크스페이스 필터. 지정 시 해당 workspace + 전역(NULL) 파편만 대상. |
+
+---
+
+## MCP 도구 — search_traces
+
+fragments를 정확 매칭으로 탐색한다 (recall의 시맨틱 검색과 달리 content/type/case_id 텍스트 매칭). event_type, entity, 키워드로 필터링하여 전체 히스토리를 grep하듯 조회.
+
+### 파라미터
+
+| 이름 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| event_type | string | - | 필터할 fragment type (fact, error, decision 등) |
+| eventType | string | - | event_type의 camelCase alias |
+| entity_key | string | - | topic ILIKE 필터 |
+| entityKey | string | - | entity_key의 camelCase alias |
+| keyword | string | - | content 내 키워드 검색 |
+| case_id | string | - | 케이스 ID 필터 |
+| caseId | string | - | case_id의 camelCase alias |
+| session_id | string | - | 세션 ID 필터 |
+| sessionId | string | - | session_id의 camelCase alias |
+| time_range | object | - | 시간 범위 필터. from(시작 시각, ISO 8601), to(종료 시각, ISO 8601) 포함. |
+| limit | number | - | 기본 20, 최대 100 |
+| workspace | string | - | 워크스페이스 필터. 지정 시 해당 workspace + 전역(NULL) 파편만 대상. |
 
 ---
 

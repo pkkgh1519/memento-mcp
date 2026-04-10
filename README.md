@@ -141,7 +141,7 @@ Claude.ai Web / ChatGPT 연동은 OAuth를 사용한다. 발급한 API 키(`mmcp
 | OAuth 연동 | RFC 7591 Dynamic Client Registration, Claude.ai / ChatGPT Web 통합 지원 |
 | **Workspace 격리** | 같은 키 내에서도 프로젝트·직종·클라이언트 단위로 기억을 분리. `api_keys.default_workspace`로 자동 태깅, 검색 시 자동 필터. |
 
-### Smart Recall (v2.5.7)
+### Smart Recall (v2.6.0)
 - **ProactiveRecall**: remember() 시 키워드 오버랩 기반 유사 파편 자동 링크
 - **CaseRewardBackprop**: case verification 이벤트 시 증거 파편 importance 자동 역전파
 - **SearchParamAdaptor**: 사용 패턴 기반 검색 임계값 자동 최적화

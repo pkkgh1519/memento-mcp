@@ -23,7 +23,7 @@ server.js  (HTTP 서버)
     ├── lib/tool-registry.js  18개 기억 도구 등록 및 라우팅
     │
     └── lib/memory/
-            ├── MemoryManager.js          비즈니스 로직 조율 계층 (904줄, 싱글턴). remember/recall/forget/amend 진입점. 실제 로직은 아래 Processor/Builder로 위임
+            ├── MemoryManager.js          비즈니스 로직 조율 계층 (1,051줄, v2.6.0 기준, 싱글턴). remember/recall/forget/amend 진입점. 실제 로직은 아래 Processor/Builder로 위임
             ├── ContextBuilder.js         context() 로직 전담. Core/Working/Anchor Memory 조합 컨텍스트 생성
             ├── ReflectProcessor.js       reflect() 로직 전담. summary→파편 변환, episode 생성, Working Memory 정리
             ├── BatchRememberProcessor.js batchRemember() 로직 전담. Phase A(검증)→B(INSERT)→C(후처리) 3단계
@@ -66,6 +66,7 @@ server.js  (HTTP 서버)
             ├── CaseEventStore.js         semantic milestone 로그 (case_events CRUD, DAG 엣지, 증거 조인)
             ├── CaseRewardBackprop.js     case verification 이벤트 -> 증거 파편 importance 원자적 역전파 (64줄)
             ├── SearchParamAdaptor.js     key_id x query_type x hour별 minSimilarity 온라인 학습, 원자적 UPSERT (116줄)
+            ├── CaseRecall.js             CBR(Case-Based Reasoning) 검색. recall(caseMode=true) 시 case_id별 그루핑, goal/events/outcome 트리플 반환. 145줄.
             ├── HistoryReconstructor.js   case_id/entity 기반 서사 재구성 (ordered_timeline, causal_chains, unresolved_branches)
             ├── memory-schema.sql         PostgreSQL 스키마 정의
             ├── migration-001-temporal.sql Temporal 스키마 마이그레이션 (valid_from/to/superseded_by)
@@ -95,7 +96,7 @@ server.js  (HTTP 서버)
             ├── migration-025-case-id-episode.sql      fragments narrative reconstruction 컬럼 (case_id, goal, outcome, phase, resolution_status, assertion_status)
             ├── migration-026-case-events.sql          case_events + case_event_edges + fragment_evidence 테이블 (Narrative Reconstruction Phase 3)
             ├── migration-027-v25-reconsolidation-episode-spreading.sql  search_events/case_events key_id 타입 수정, fragment_links 재통합 컬럼 + link_reconsolidations 테이블, case_events idempotency_key, fragments.keywords GIN 인덱스
-            ├── migration-028-composite-indexes.sql  (agent_id, topic, created_at DESC) 복합 인덱스 + (key_id, agent_id, importance DESC) 부분 인덱스 (QuotaChecker/FragmentReader 최적화)
+            ├── migration-028-v253-improvements.sql  (agent_id, topic, created_at DESC) 복합 인덱스 + (key_id, agent_id, importance DESC) 부분 인덱스 (QuotaChecker/FragmentReader 최적화)
             └── migration-029-search-param-thresholds.sql  search_param_thresholds 테이블 (SearchParamAdaptor 온라인 학습 저장소, key_id NOT NULL DEFAULT -1)
 ```
 
