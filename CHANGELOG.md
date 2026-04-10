@@ -1,5 +1,44 @@
 # Changelog
 
+## [2.7.0] - 2026-04-10
+
+### Security (Breaking Changes)
+- **Fail-closed authentication**: `MEMENTO_ACCESS_KEY` 미설정 시 서버 기동 거부. `MEMENTO_AUTH_DISABLED=true` 명시 opt-in으로만 우회. (78e59d1)
+- **OAuth silent consent 제거**: 모든 authorize 요청은 consent 화면 경유 필수. `OAUTH_TRUSTED_ORIGINS` 기본값 빈 배열. (bcef71b)
+- **CORS fail-closed**: `ALLOWED_ORIGINS`/`ADMIN_ALLOWED_ORIGINS` 미설정 시 same-origin만 허용 (이전: 모든 origin 허용). (517c76a)
+- **RBAC default-deny**: 알려지지 않은 도구는 `{ allowed: false }` 반환. 18개 도구 전체 맵핑 완료. (d97738a)
+- **content_hash 테넌트 격리**: 전역 UNIQUE 인덱스 → `(key_id, content_hash)` partial unique 2개로 전환. cross-tenant ON CONFLICT 경로 차단. migration-031 필요. (83859fd, aed5a55)
+- **_keyId 클라이언트 위조 방어**: tools/call 진입부에서 클라이언트 전송 `_keyId/_groupKeyIds` 무조건 delete 후 서버 인증값으로 재주입. (236c7d4)
+- **FragmentReader.getById 시그니처 확장**: `(id, agentId)` → `(id, agentId, keyId, groupKeyIds)` SQL 레벨 key_id 필터 추가. 모든 호출부 전수 수정. (e1555ed)
+- **GraphLinker/ContradictionDetector key_id 격리**: supersession/contradiction 쿼리에 cross-tenant 차단. (92589ad, aa48a24)
+- **LinkStore/CaseEventStore/RememberPostProcessor key_id 필터**: traversal·소유권·증거 쿼리 격리. (9260ff2, fd8dbdc, bde6341)
+- **GraphNeighborSearch**: `key_id IS NULL` master 노출 제거 + `::int[]` → `::text[]` 타입 수정. (1981331)
+- **OAuth access token TTL 분리**: `OAUTH_ACCESS_TTL_SECONDS` (기본 3600) + `OAUTH_REFRESH_TTL_SECONDS` (기본 604800). 세션 TTL과 독립. (24d38ce)
+- **OAuth/Admin rate limit**: `/register`, `/token`, `/authorize`, `/admin/auth`, `/admin/keys`, `/admin/import`에 IP 기반 rate limit + body cap 적용. (fe009cd)
+- **TemporalLinker groupKeyIds 수용**: cross-tenant temporal 링크 생성 차단. (2780860)
+
+### Fixed
+- **그룹 조회 실패 4건 수정**:
+  - `FragmentReader.searchByKeywords/searchByTopic/searchBySemantic` SELECT 절에 `key_id` 컬럼 추가 (d65e656)
+  - 세션 복원 시 `groupKeyIds` null 폴백 — `ApiKeyStore.getGroupKeyIds()` 재조회 (4117278, 5291b4f)
+  - `FragmentIndex.keyNs` 배열 처리 — per-namespace SUNION으로 L1 캐시 회복 (ae3a6e6)
+  - `search_param_thresholds.key_id` INTEGER → TEXT 마이그레이션 (2661394, 8f693b6)
+- **admin-overview-render.test.js ESM 호환**: `AdminEsmLoadError` sentinel + `describe.skip` (0b85384)
+
+### Added
+- **OpenAPI 3.1.0**: `GET /openapi.json` — master=35 paths 전체, API key=권한 필터링. `ENABLE_OPENAPI=true`로 활성화. (dc39ca4)
+- **AutoReflect 개선**: `_shouldSkipReflect` (명시적 파편 세션 skip), `_buildGeminiPrompt` (자기완결성 5원칙 주입), `_reflectMinimal` 제거. (7834f4e~d7fa815)
+- **remember/reflect 스키마 강화**: 자기완결성 5대 기준(대명사 해소, 구체 엔티티/수치, 메타 금지, 원자성, 인과 결합 예외) + 6개월 판단 테스트. (eadcca1)
+- **거부 경로 Prometheus 카운터 4종**: `memento_auth_denied_total`, `memento_cors_denied_total`, `memento_rbac_denied_total`, `memento_tenant_isolation_blocked_total`. (a35d185)
+- **Winston 로그 redactor**: Authorization/API 키/세션 토큰/OAuth 코드/content 마스킹. (f589536)
+
+### Migration Guide (v2.6.0 → v2.7.0)
+- `MEMENTO_ACCESS_KEY` 필수 — 미설정 시 서버 기동 거부. 개발용: `MEMENTO_AUTH_DISABLED=true`
+- `ALLOWED_ORIGINS` 미설정 시 same-origin만 허용. 기존 cross-origin 클라이언트는 명시적 설정 필요
+- OAuth 기존 토큰은 최대 30일 TTL까지 유효. 갱신 시 consent 화면 1회 경유
+- `npm run migrate` 실행: migration-030 (search_param_thresholds 타입), migration-031 (content_hash 격리)
+- `OAUTH_ACCESS_TTL_SECONDS` (기본 3600) / `OAUTH_REFRESH_TTL_SECONDS` (기본 604800) 환경변수 신규
+
 ## [2.6.0] - 2026-04-07
 
 ### Added
