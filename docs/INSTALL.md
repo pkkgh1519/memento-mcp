@@ -78,7 +78,11 @@ psql $DATABASE_URL -f lib/memory/migration-028-v253-improvements.sql            
 psql $DATABASE_URL -f lib/memory/migration-029-search-param-thresholds.sql               # SearchParamAdaptor 검색 파라미터 학습 테이블 (v2.5.6)
 psql $DATABASE_URL -f lib/memory/migration-030-search-param-thresholds-key-text.sql      # search_param_thresholds.key_id INTEGER → TEXT (UUID 호환) (v2.6.0)
 psql $DATABASE_URL -f lib/memory/migration-031-content-hash-per-key.sql                  # content_hash 전역 UNIQUE → 테넌트별 partial unique index (v2.7.0)
+psql $DATABASE_URL -f lib/memory/migration-032-fragment-claims.sql                       # fragment_claims 테이블 + tenant 격리 partial unique (v2.8.0 Symbolic Memory Phase 0)
+psql $DATABASE_URL -f lib/memory/migration-033-symbolic-hard-gate.sql                    # api_keys.symbolic_hard_gate 컬럼 (v2.8.0 symbolic hard gate opt-in)
 ```
+
+> **rollback 파일 네이밍**: rollback SQL 파일은 `rollback-migration-NNN-*.sql` 형식으로 이름을 지정해야 한다. `migrate.js`의 auto-pickup glob은 `migration-*.sql` 패턴만 인식하므로, `rollback-` 접두어를 붙이면 자동 실행에서 제외된다.
 
 v1.8.0부터 자동 마이그레이션을 지원한다. 위 수동 실행 대신:
 
