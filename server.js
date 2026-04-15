@@ -260,9 +260,9 @@ const server = http.createServer(async (req, res) => {
   recordHttpRequest(req.method, url.pathname, 404, duration);
 });
 
-server.keepAliveTimeout = 0;
-server.headersTimeout   = 0;
-server.requestTimeout   = 0;
+server.keepAliveTimeout = Number(process.env.KEEP_ALIVE_TIMEOUT_MS  || 75000);
+server.headersTimeout   = Number(process.env.HEADERS_TIMEOUT_MS    || 76000);
+server.requestTimeout   = Number(process.env.REQUEST_TIMEOUT_MS    || 0);
 
 server.on("connection", (socket) => {
   socket.setKeepAlive(true, 60000);
