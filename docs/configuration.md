@@ -38,6 +38,27 @@
 | ENABLE_SPREADING_ACTIVATION | false | SpreadingActivation 활성화. true 시 recall의 contextText 파라미터로 관련 파편을 선제적 활성화한다. 레이턴시 영향 측정 후 활성화 권장 |
 | ENABLE_PATTERN_ABSTRACTION | false | 패턴 추상화 활성화. 데이터 충분 축적 후 활성화 예정 (현재 미구현) |
 
+#### Symbolic Memory (v2.8.0, opt-in)
+
+모든 플래그 기본 `false` / noop. 기본값 상태에서 v2.7.0 동작과 완전히 동일해야 하며, 단계적 활성화는 CHANGELOG.md v2.8.0 Migration Guide의 권장 순서를 따른다.
+
+| 변수 | 기본값 | Phase | 설명 |
+|------|--------|-------|------|
+| MEMENTO_SYMBOLIC_ENABLED | false | 0 | 전체 symbolic 서브시스템 on/off (마스터 킬 스위치) |
+| MEMENTO_SYMBOLIC_SHADOW | false | 1 | shadow mode: symbolic 결과를 기록만 하고 미적용 |
+| MEMENTO_SYMBOLIC_CLAIM_EXTRACTION | false | 1 | RememberPostProcessor에서 ClaimExtractor 호출 |
+| MEMENTO_SYMBOLIC_EXPLAIN | false | 2 | recall 응답에 explanation 필드 포함 |
+| MEMENTO_SYMBOLIC_LINK_CHECK | false | 3 | LinkIntegrityChecker advisory 경로 활성화 |
+| MEMENTO_SYMBOLIC_POLARITY_CONFLICT | false | 3 | ClaimConflictDetector advisory warning 기록 |
+| MEMENTO_SYMBOLIC_POLICY_RULES | false | 4 | PolicyRules soft gating (validation_warnings 누적) |
+| MEMENTO_SYMBOLIC_CBR_FILTER | false | 5 | CaseRecall symbolic 필터 적용 |
+| MEMENTO_SYMBOLIC_PROACTIVE_GATE | false | 6 | ProactiveRecall polarity gate |
+| MEMENTO_SYMBOLIC_RULE_VERSION | v1 | - | 규칙 패키지 버전 식별자 (fragment_claims.rule_version 컬럼) |
+| MEMENTO_SYMBOLIC_TIMEOUT_MS | 50 | - | SymbolicOrchestrator 단일 호출 timeout (ms) |
+| MEMENTO_SYMBOLIC_MAX_CANDIDATES | 32 | - | symbolic 처리 대상 후보 수 상한 |
+
+`api_keys.symbolic_hard_gate` 컬럼 (migration-033)으로 키 단위 hard gate 전환 가능. 기본 false.
+
 #### OAuth 토큰 TTL
 
 OAuth 토큰 TTL은 세션 TTL과 연동된다.
