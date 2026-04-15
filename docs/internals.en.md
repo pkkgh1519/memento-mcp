@@ -360,3 +360,91 @@ Records result counts for each search call in the `search_param_thresholds` tabl
 - Adaptation: `avg_result < 1 -> -0.01`, `avg_result > 8 -> +0.01` (symmetric, [0.10, 0.60])
 - UPSERT: single INSERT...ON CONFLICT DO UPDATE without SELECT (TOCTOU-free)
 - Integration: Promise attached in `_buildSearchQuery()`, awaited in `_searchL3()`
+
+---
+
+## Symbolic Memory Layer Internals (v2.8.0)
+
+The Symbolic Memory Layer section in architecture.md covers the overall design. This chapter focuses on implementation details of each module.
+
+### SymbolicOrchestrator
+
+`lib/symbolic/SymbolicOrchestrator.js`. Constructor: `({ config, metrics, rulePackLoader })`. All three dependencies provide production singleton defaults and are replaceable in tests via a DI structure. The `evaluate({ mode, candidates, ctx, timeoutMs, ruleVersion, correlationId })` entry point handles 5 modes (`recall|remember|link|explain|shadow`).
+
+When `config.enabled=false`, it immediately returns a noop result with zero CPU cost. Timeout is implemented via `Promise.race([evalPromise, timeoutPromise])`; on expiry it returns `degraded=true` and never throws. `clearTimeout` handling prevents timer leaks. `rule_version` and `correlation_id` accompany every evaluate call and are reflected in the result object as `ruleVersion`.
+
+### SymbolicMetrics
+
+`lib/symbolic/SymbolicMetrics.js`. Registers 4 prom-client metrics immediately on module load:
+- `memento_symbolic_claim_extracted_total` (labels: extractor, polarity)
+- `memento_symbolic_warning_total` (labels: rule, severity)
+- `memento_symbolic_gate_blocked_total` (labels: phase, reason)
+- `memento_symbolic_op_latency_ms` histogram (labels: op, buckets: 1~500ms)
+
+Four helper methods unify external calls: `recordClaim(extractor, polarity)`, `recordWarning(rule, severity)`, `recordGateBlock(phase, reason)`, `observeLatency(op, ms)`. Supports both singleton `symbolicMetrics` export and DI injection simultaneously.
+
+### ClaimExtractor
+
+`lib/symbolic/ClaimExtractor.js`. Calls `MorphemeIndex.tokenize` asynchronously and falls back to whitespace splitting on failure. Polarity determination priority is `uncertain > negative > positive`; when a negative marker is present, positive markers co-existing are still resolved as negative. The original text and a whitespace-removed version are both checked simultaneously to absorb whitespace variations. Rule-based extractor confidence range is 0.5~0.8; the uncertain interval is 0.4~0.5.
+
+### ClaimStore
+
+`lib/symbolic/ClaimStore.js`. Uses `TEXT key_id` and applies `key_id IS NOT DISTINCT FROM $N` pattern for tenant isolation in all queries. This operator treats NULL=NULL as true, handling master (NULL) and tenant (TEXT) in a single branch without divergence. The `(key_id IS NULL OR key_id = $N)` pattern prohibited since v2.5.7 is not used.
+
+At the `insert` entry point, a `fragment.key_id !== ctx.keyId` mismatch is checked and a `TENANT_ISOLATION_VIOLATION` exception is thrown. `findPolarityConflicts` queries positive↔negative pairs on the same (subject, predicate, COALESCE(object,'')) tuple based on a confidence threshold. Two partial unique indexes replicated in migration-032 (one for master NULL, one for tenant TEXT) block cross-tenant leakage through the ON CONFLICT path.
+
+### ClaimConflictDetector
+
+`lib/symbolic/ClaimConflictDetector.js`. Delegates SQL logic to `ClaimStore.findPolarityConflicts` and is solely responsible for severity calculation, metrics recording, and result normalization (single responsibility). Severity determination: 1 conflict → `low`, 2~3 → `medium`, 4 or more → `high`. ClaimStore exceptions are absorbed here, returning `degraded=true` to avoid blocking the neural path fallback. DI: `({ claimStore, metrics })`.
+
+### LinkIntegrityChecker
+
+`lib/symbolic/LinkIntegrityChecker.js`. Reuses the `sessionLinker.wouldCreateCycle(fromId, toId, agentId, keyId)` 4-arg signature. Adding this signature in Phase 0.5 allowed Phase 3 implementation to reuse existing code. `DIRECTIONAL_RELATIONS = {caused_by, resolved_by, superseded_by, preceded_by}` — types outside this set early-return, avoiding unnecessary cycle checks for undirected links. Advisory only: `hasCycle=true` does not block. DI: `({ sessionLinker })`.
+
+### ExplanationBuilder
+
+`lib/symbolic/ExplanationBuilder.js`. The `annotate(fragments, searchContext)` entry point returns an immutable copy (`{ ...fragment, explanations: reasons }`) via `fragments.map`. The original fragment object (Hot Cache, shared reference with FragmentStore) is never mutated. `reasonBuilder` is replaceable via DI; the default is `buildReasonCodes` from `rules/v1/explain.js`. Empty input returns no-op to minimize GC load. The singleton `explanationBuilder` export is shared with `FragmentSearch`.
+
+### PolicyRules
+
+`lib/symbolic/PolicyRules.js`. Implements 5 predicates as pure synchronous functions:
+1. `decisionHasRationale`: for decision type, `linked_to >= 2` or `RATIONALE_REGEX` match
+2. `errorHasResolutionPath`: for error type, `CAUSE_FIX_REGEX` match or `resolution_status` present
+3. `procedureHasStepMarkers`: for procedure type, `STEP_MARKER_REGEX` match
+4. `caseIdHasResolutionStatus`: fragment with case_id that is missing `resolution_status`
+5. `assertionNotContradictory`: `assertion_status` simultaneously verified and rejected
+
+`check(fragment)` returns: `[{ rule, severity, detail, ruleVersion }]`. No DB queries; pure JS synchronous.
+
+### CbrEligibility
+
+`lib/symbolic/CbrEligibility.js`. Applies 4 constraints decidable synchronously from in-memory fragment fields without asynchronous DB queries: `tenant_match`, `has_case_id`, `not_quarantine` (quarantine_state !== 'soft'), `resolved_state` (resolution_status is `resolved` or null/undefined). For each blocked fragment, calls `symbolicMetrics.recordGateBlock('cbr', reason)`. DI: `({ metrics })`.
+
+### 5 Rule Files (lib/symbolic/rules/v1/)
+
+**explain.js**: `buildReasonCodes(fragment, searchContext)` function. Input: fragment (including searchPath, layerLatency metadata) + searchContext. Output: array of up to 3 reason codes. L3 morpheme path → `direct_keyword_match`, pgvector L2 → `semantic_similarity`, graph 1-hop → `graph_neighbor_1hop`, timeRange match → `temporal_proximity`, case cohort → `case_cohort_member`, EMA activation (`>= 0.5`) → `recent_activity_ema`.
+
+**link-integrity.js**: `checkCycle(input, ctx)` rule function. Creates a `LinkIntegrityChecker` instance and calls it with `sessionLinker` injected from ctx. Types outside DIRECTIONAL_RELATIONS return `{ hasCycle: false, reason: 'non_directional' }` early.
+
+**claim-conflict.js**: `detectPolarityConflict({ fragmentId, keyId }, { detector })`. Test isolation via `ClaimConflictDetector` DI injection. Detects polarity conflicts for the input fragmentId and returns results including severity.
+
+**policy.js**: `evaluatePolicy(fragment, _ctx)`. Creates a `PolicyRules` singleton instance at module load time. `_ctx` is currently unused and is preserved for future signature compatibility.
+
+**proactive-gate.js**: `evaluateProactiveGate({ source, target, keyId }, _ctx)`. Checks in cost-ascending order: `invalid_target` → `quarantine` → `cohort_mismatch` → `polarity_conflict`. `ClaimConflictDetector` throws are fail-open (returns allowed=true). Returns: `{ allowed, reason, ruleVersion }`.
+
+### RememberPostProcessor 8-Stage Pipeline and _extractSymbolicClaims Invocation Path
+
+The `run()` method in `lib/memory/RememberPostProcessor.js` executes 8 stages sequentially. Stage 8 is Symbolic claim extraction (Phase 1), proceeding as `this._symbolicClaimPromise = this._extractSymbolicClaims(...).catch(...)` fire-and-forget. It does not block the main pipeline; failures do not affect memory storage.
+
+`_extractSymbolicClaims(fragment, { agentId, keyId })`: `SYMBOLIC_CONFIG.enabled && SYMBOLIC_CONFIG.claimExtraction` guard → `ClaimExtractor.extract` → `ClaimStore.insert`. TENANT_ISOLATION_VIOLATION exceptions call `symbolicMetrics.recordGateBlock("claim_extraction", "tenant_violation")` and are then swallowed. On successful claim, `symbolicMetrics.recordClaim(extractor, polarity)` is called.
+
+### FragmentSearch Hook Chain Insertion Points
+
+Three hooks execute in order after line 88 in `lib/memory/FragmentSearch.js`:
+1. **shadow hook** (line 99): `SYMBOLIC_CONFIG.enabled && SYMBOLIC_CONFIG.shadow` → records `symbolicMetrics.observeLatency("shadow_recall", ...)` only
+2. **explain hook** (line 107): `SYMBOLIC_CONFIG.enabled && SYMBOLIC_CONFIG.explain` → `explanationBuilder.annotate(clean, { searchPath, layerLatency, query, caseContext })`
+3. **cbr filter** (line 124): `SYMBOLIC_CONFIG.enabled && SYMBOLIC_CONFIG.cbrFilter && sq.caseId` → `cbrEligibility.filter(clean, sq)`. Pre-filter `rawResultCount` is preserved separately to protect the SearchParamAdaptor learning signal.
+
+### ConflictResolver.checkAssertionConsistency and validationWarnings Addition
+
+`checkAssertionConsistency` in `lib/memory/ConflictResolver.js` preserves the existing Jaccard pipeline (`JACCARD_THRESHOLD=0.3`, up to 10 fragments within a 7-day window) while adding Phase 3 symbolic polarity conflict results alongside it. Within the `SYMBOLIC_CONFIG.enabled && SYMBOLIC_CONFIG.polarityConflict` guard, `ClaimConflictDetector.detectPolarityConflicts` is called; exceptions are logged with logWarn and swallowed. `conflictWith` IDs found in polarity conflicts are merged into the existing `supersedeCandidates`. The return type is extended to a 3-tuple `{ assertionStatus, supersedeCandidates, validationWarnings }`, returning `validationWarnings: []` as an empty array when the flag is off.
