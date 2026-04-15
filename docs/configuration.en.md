@@ -57,7 +57,7 @@ All flags default to `false` / noop. With default values, behavior must be ident
 | MEMENTO_SYMBOLIC_TIMEOUT_MS | 50 | - | SymbolicOrchestrator single call timeout (ms) |
 | MEMENTO_SYMBOLIC_MAX_CANDIDATES | 32 | - | Candidate count cap for symbolic processing |
 
-The `api_keys.symbolic_hard_gate` column (migration-033) enables per-key hard gate switching. Defaults to false.
+The `api_keys.symbolic_hard_gate` column (migration-033) enables per-key hard gate switching. Defaults to false. When set to true, PolicyRules violations cause the remember() call to be rejected with JSON-RPC error `-32003`. Master keys (keyId=NULL) are excluded. Cache TTL is 30 seconds.
 
 #### OAuth Token TTL
 

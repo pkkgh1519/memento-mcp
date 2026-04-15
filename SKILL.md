@@ -1085,7 +1085,7 @@ recall 또는 context 응답에 `_memento_hint` 필드가 있으면:
 - `caseIdHasResolutionStatus` — case_id 보유 파편인데 resolution_status 미설정 → `resolutionStatus: "resolved"` 등 명시
 - `assertionNotContradictory` — 기존 assertion과 충돌 → `amend` 또는 `forget`으로 과거 파편 정리
 
-경고는 soft gate이므로 기본적으로 저장을 차단하지 않는다. `api_keys.symbolic_hard_gate=true`로 전환하면 해당 키는 경고 발생 시 저장 거부된다.
+경고는 soft gate이므로 기본적으로 저장을 차단하지 않는다. `api_keys.symbolic_hard_gate=true`로 전환하면 해당 키는 경고 발생 시 저장이 거부되고 JSON-RPC 에러 코드 `-32003` (SYMBOLIC_POLICY_VIOLATION)과 함께 `data.violations` 배열에 위반된 rule 이름이 반환된다. 마스터 키(keyId=NULL)는 대상에서 제외된다. 자세한 운영 절차는 `docs/operations/symbolic-hard-gate.md` 참조.
 
 ### explanation 필드 활용
 

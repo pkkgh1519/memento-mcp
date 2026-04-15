@@ -356,6 +356,10 @@ reason code 목록 (최대 3개):
 
 경고는 soft gate이므로 저장을 차단하지 않는다. `api_keys.symbolic_hard_gate=true` 설정 시 경고 발생 파편은 저장 거부된다.
 
+### 에러 코드
+
+- `-32003` (SYMBOLIC_POLICY_VIOLATION): Symbolic hard gate가 활성화된 키에서 PolicyRules violations 발생. 저장이 거부됨. `data.violations` 배열에 위반 rule 이름 포함
+
 ---
 
 ## MCP 도구 — batch_remember
