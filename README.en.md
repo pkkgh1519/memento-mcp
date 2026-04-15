@@ -149,6 +149,10 @@ See [integration guides](docs/getting-started/) for platform-specific setup.
 - **Admin rate limit**: IP-based rate limits applied to `/auth`, `/keys` POST, and `/import` POST endpoints.
 - **OpenAPI**: `GET /openapi.json` endpoint added (`ENABLE_OPENAPI=true`). Master key receives the full spec; API keys receive a permissions-filtered spec.
 
+### Symbolic Verification Layer (v2.8.0)
+
+- **Symbolic Verification Layer (v2.8.0)**: Optional explainability, advisory link integrity, polarity conflict detection, policy rules soft gating. 9 core modules + 5 rule files. All flags off by default for full v2.7.0 backwards compatibility.
+
 ### Smart Recall (v2.7.0)
 - **ProactiveRecall**: Automatically links similar fragments based on keyword overlap during remember()
 - **CaseRewardBackprop**: Automatically back-propagates importance to evidence fragments on case verification events

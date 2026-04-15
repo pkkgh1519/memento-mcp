@@ -149,6 +149,10 @@ Claude.ai Web / ChatGPT 연동은 OAuth를 사용한다. 발급한 API 키(`mmcp
 - **Admin rate limit**: `/auth`, `/keys` POST, `/import` POST에 IP 기반 rate limit 적용.
 - **OpenAPI**: `GET /openapi.json` 엔드포인트 추가 (`ENABLE_OPENAPI=true`). master key는 전체 경로, API key는 permissions 필터 스펙 반환.
 
+### Symbolic Verification Layer (v2.8.0)
+
+- **Symbolic Verification Layer (v2.8.0)**: 선택적 설명 가능성, advisory 링크 무결성, 극성 충돌 탐지, 정책 규칙 soft gating. 9 core 모듈 + 5 규칙 파일. 모든 플래그 기본 비활성, v2.7.0 완전 호환.
+
 ### Smart Recall (v2.7.0)
 - **ProactiveRecall**: remember() 시 키워드 오버랩 기반 유사 파편 자동 링크
 - **CaseRewardBackprop**: case verification 이벤트 시 증거 파편 importance 자동 역전파
