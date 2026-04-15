@@ -47,17 +47,17 @@
 | MEMENTO_SYMBOLIC_ENABLED | false | 0 | 전체 symbolic 서브시스템 on/off (마스터 킬 스위치) |
 | MEMENTO_SYMBOLIC_SHADOW | false | 1 | shadow mode: symbolic 결과를 기록만 하고 미적용 |
 | MEMENTO_SYMBOLIC_CLAIM_EXTRACTION | false | 1 | RememberPostProcessor에서 ClaimExtractor 호출 |
-| MEMENTO_SYMBOLIC_EXPLAIN | false | 2 | recall 응답에 explanation 필드 포함 |
+| MEMENTO_SYMBOLIC_EXPLAIN | false | 2 | recall 응답 fragment에 `explanations: [{code, detail, ruleVersion}]` 필드 포함 (violations 있을 때만) |
 | MEMENTO_SYMBOLIC_LINK_CHECK | false | 3 | LinkIntegrityChecker advisory 경로 활성화 |
 | MEMENTO_SYMBOLIC_POLARITY_CONFLICT | false | 3 | ClaimConflictDetector advisory warning 기록 |
-| MEMENTO_SYMBOLIC_POLICY_RULES | false | 4 | PolicyRules soft gating (validation_warnings 누적) |
+| MEMENTO_SYMBOLIC_POLICY_RULES | false | 4 | PolicyRules soft gating — `remember` 응답에 `validation_warnings: string[]` (violations 있을 때만 포함), DB 영속화 |
 | MEMENTO_SYMBOLIC_CBR_FILTER | false | 5 | CaseRecall symbolic 필터 적용 |
 | MEMENTO_SYMBOLIC_PROACTIVE_GATE | false | 6 | ProactiveRecall polarity gate |
 | MEMENTO_SYMBOLIC_RULE_VERSION | v1 | - | 규칙 패키지 버전 식별자 (fragment_claims.rule_version 컬럼) |
 | MEMENTO_SYMBOLIC_TIMEOUT_MS | 50 | - | SymbolicOrchestrator 단일 호출 timeout (ms) |
 | MEMENTO_SYMBOLIC_MAX_CANDIDATES | 32 | - | symbolic 처리 대상 후보 수 상한 |
 
-`api_keys.symbolic_hard_gate` 컬럼 (migration-033)으로 키 단위 hard gate 전환 가능. 기본 false. true로 설정 시 PolicyRules violations 발생 시 저장이 거부되고 JSON-RPC 에러 `-32003`으로 응답한다. 마스터 키(keyId=NULL) 제외. 캐시 TTL 30초.
+`api_keys.symbolic_hard_gate` 컬럼 (migration-033)으로 키 단위 hard gate 전환 가능. 기본 false. true로 설정 시 PolicyRules violations 발생 시 저장이 거부되고 JSON-RPC **프로토콜 레벨** 에러 `-32003`으로 응답한다 (MCP 도구 에러 아님 — `error.data.violations: string[]` 포함). 마스터 키(keyId=NULL) 제외. 캐시 TTL 30초.
 
 #### OAuth 토큰 TTL
 

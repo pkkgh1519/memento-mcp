@@ -334,19 +334,32 @@ reason code 목록 (최대 3개):
 
 ### 응답
 
+violations 없는 경우 (정상 저장):
 ```json
 {
-  "fragment": {
-    "id": "...",
-    "content": "...",
-    "type": "decision",
-    "importance": 0.8,
-    "validation_warnings": []
-  }
+  "success": true,
+  "id": "frag-...",
+  "keywords": ["..."],
+  "ttl_tier": "warm",
+  "scope": "permanent",
+  "conflicts": []
 }
 ```
 
-`validation_warnings` (v2.8.0+): PolicyRules soft gating violations 배열. `MEMENTO_SYMBOLIC_POLICY_RULES=false` (기본값) 상태에서는 항상 빈 배열 또는 필드 생략. 활성화 시 다음 5가지 predicate 중 실패한 것이 누적된다:
+violations 있는 경우 (soft gate — 저장됨):
+```json
+{
+  "success": true,
+  "id": "frag-...",
+  "keywords": ["..."],
+  "ttl_tier": "warm",
+  "scope": "permanent",
+  "conflicts": [],
+  "validation_warnings": ["decisionHasRationale"]
+}
+```
+
+`validation_warnings` (v2.8.0+): PolicyRules soft gating violations rule 이름 string[]. violations 없으면 필드 자체 생략. `MEMENTO_SYMBOLIC_POLICY_RULES=false` (기본값) 시 항상 생략. 활성화 시 다음 5가지 predicate 중 실패한 것이 누적된다:
 
 - `decisionHasRationale` — decision 타입이 linked_to 2건 이상 또는 근거 키워드 미포함
 - `errorHasResolutionPath` — error 타입이 cause/fix 키워드 또는 resolution_status 미포함
@@ -354,11 +367,26 @@ reason code 목록 (최대 3개):
 - `caseIdHasResolutionStatus` — case_id 보유 파편이 resolution_status 미설정
 - `assertionNotContradictory` — 기존 assertion과 polarity 충돌
 
-경고는 soft gate이므로 저장을 차단하지 않는다. `api_keys.symbolic_hard_gate=true` 설정 시 경고 발생 파편은 저장 거부된다.
+경고는 soft gate이므로 저장을 차단하지 않는다. `api_keys.symbolic_hard_gate=true` 설정 시 경고 발생 파편은 저장 거부된다. 이 경우 아래 에러 코드가 반환된다.
 
 ### 에러 코드
 
-- `-32003` (SYMBOLIC_POLICY_VIOLATION): Symbolic hard gate가 활성화된 키에서 PolicyRules violations 발생. 저장이 거부됨. `data.violations` 배열에 위반 rule 이름 포함
+- `-32003` (SYMBOLIC_POLICY_VIOLATION): Symbolic hard gate가 활성화된 키에서 PolicyRules violations 발생. 저장이 거부됨. MCP 도구 에러(isError: true)가 아닌 JSON-RPC **프로토콜 레벨** 에러다.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 5,
+  "error": {
+    "code": -32003,
+    "message": "policy_violation: decisionHasRationale",
+    "data": {
+      "violations": ["decisionHasRationale"],
+      "fragmentType": "decision"
+    }
+  }
+}
+```
 
 ---
 

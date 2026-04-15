@@ -1077,7 +1077,11 @@ recall 또는 context 응답에 `_memento_hint` 필드가 있으면:
 
 ### validation_warnings 해석
 
-`remember` 응답에 `validation_warnings` 배열이 포함된다 (`MEMENTO_SYMBOLIC_POLICY_RULES=true` 시). 배열이 비어있지 않으면 다음 중 하나에 해당한다:
+`remember` 응답에 `validation_warnings: string[]` 필드가 포함된다 (`MEMENTO_SYMBOLIC_POLICY_RULES=true` 시, violations 있을 때만). 각 요소는 rule 이름 문자열이다. 필드 자체가 없으면 위반 없음.
+
+예시: `{"success": true, "id": "frag-...", "validation_warnings": ["decisionHasRationale"]}`
+
+배열이 비어있지 않으면 다음 중 하나에 해당한다:
 
 - `decisionHasRationale` — decision 타입인데 근거가 약함 → `linkedTo`에 2건 이상 연결하거나 "왜냐하면", "because" 같은 근거 키워드 포함
 - `errorHasResolutionPath` — error 타입인데 해결 경로 부재 → cause/fix 키워드 또는 `resolutionStatus` 명시
@@ -1085,13 +1089,21 @@ recall 또는 context 응답에 `_memento_hint` 필드가 있으면:
 - `caseIdHasResolutionStatus` — case_id 보유 파편인데 resolution_status 미설정 → `resolutionStatus: "resolved"` 등 명시
 - `assertionNotContradictory` — 기존 assertion과 충돌 → `amend` 또는 `forget`으로 과거 파편 정리
 
-경고는 soft gate이므로 기본적으로 저장을 차단하지 않는다. `api_keys.symbolic_hard_gate=true`로 전환하면 해당 키는 경고 발생 시 저장이 거부되고 JSON-RPC 에러 코드 `-32003` (SYMBOLIC_POLICY_VIOLATION)과 함께 `data.violations` 배열에 위반된 rule 이름이 반환된다. 마스터 키(keyId=NULL)는 대상에서 제외된다. 자세한 운영 절차는 `docs/operations/symbolic-hard-gate.md` 참조.
+경고는 soft gate이므로 기본적으로 저장을 차단하지 않는다. `api_keys.symbolic_hard_gate=true`로 전환하면 해당 키는 경고 발생 시 저장이 거부된다. 이 경우 MCP 도구 에러가 아닌 JSON-RPC **프로토콜 레벨** 에러 코드 `-32003` (SYMBOLIC_POLICY_VIOLATION)이 반환된다:
 
-### explanation 필드 활용
+```json
+{"jsonrpc": "2.0", "id": 5, "error": {"code": -32003, "message": "policy_violation: decisionHasRationale", "data": {"violations": ["decisionHasRationale"], "fragmentType": "decision"}}}
+```
 
-`recall` 응답 파편에 `explanations` 배열이 포함된다 (`MEMENTO_SYMBOLIC_EXPLAIN=true` 시). 해당 파편이 왜 검색 결과에 포함됐는지 최대 3개 이유를 제공한다. 클라이언트가 파편의 관련성을 UI에 표시하거나, LLM 컨텍스트에 설명을 주입할 때 활용한다.
+마스터 키(keyId=NULL)는 대상에서 제외된다. 자세한 운영 절차는 `docs/operations/symbolic-hard-gate.md` 참조.
 
-reason code 6종:
+### explanations 필드 활용
+
+`recall` 응답 파편에 `explanations: [{code, detail, ruleVersion}]` 배열이 포함된다 (`MEMENTO_SYMBOLIC_EXPLAIN=true` 시, 설명이 있을 때만). 해당 파편이 왜 검색 결과에 포함됐는지 최대 3개 이유를 제공한다. 클라이언트가 파편의 관련성을 UI에 표시하거나, LLM 컨텍스트에 설명을 주입할 때 활용한다.
+
+예시: `{"explanations": [{"code": "semantic_similarity", "detail": "cosine 0.87", "ruleVersion": "v1"}]}`
+
+reason code 6종 (`code` 필드값):
 - `direct_keyword_match` — L2 형태소 매칭
 - `semantic_similarity` — L3 pgvector 임베딩
 - `graph_neighbor_1hop` — L2.5 그래프 이웃
