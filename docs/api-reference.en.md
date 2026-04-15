@@ -232,6 +232,29 @@ MCP resources for real-time queries on the current state of the memory system.
 
 Each returned fragment includes a `key_id` field. When called with a master key, fragments owned by other API keys may also be returned, identifiable by their `key_id` value. When called with an API key, only fragments owned by that key (`key_id` match) or group-shared fragments are returned.
 
+`explanation` (v2.8.0+, included only when `MEMENTO_SYMBOLIC_EXPLAIN=true`): Explains why the fragment was included in the search results, using up to 3 reason codes.
+
+```json
+{
+  "fragment": {
+    "id": "...",
+    "explanations": [
+      { "code": "direct_keyword_match",  "detail": "L2 morpheme/keyword match",  "ruleVersion": "v1" },
+      { "code": "graph_neighbor_1hop",   "detail": "graph neighbor 1-hop",        "ruleVersion": "v1" }
+    ]
+  }
+}
+```
+
+Reason code list (up to 3):
+
+- `direct_keyword_match` — included via L2 morpheme/keyword matching
+- `semantic_similarity` — included via L3 pgvector embedding similarity
+- `graph_neighbor_1hop` — included via L2.5 graph neighbor 1-hop
+- `temporal_proximity` — included via timeRange filter or ±24h temporal proximity
+- `case_cohort_member` — included as a member of the same case_id cohort in caseMode path
+- `recent_activity_ema` — included with a score boost due to high ema_activation ranking
+
 ### depth enum
 
 | Value | Target Types | Use Case |
@@ -307,6 +330,30 @@ Fragment-based memory storage. Store exactly one atomic fact in 1-2 sentences. I
 | phase | string | - | Work phase (e.g., planning, debugging, verification) |
 | resolutionStatus | string | - | Task resolution status (open, resolved, abandoned) |
 | assertionStatus | string | - | Fragment confidence level (observed, inferred, verified, rejected). Default: observed |
+
+### Response
+
+```json
+{
+  "fragment": {
+    "id": "...",
+    "content": "...",
+    "type": "decision",
+    "importance": 0.8,
+    "validation_warnings": []
+  }
+}
+```
+
+`validation_warnings` (v2.8.0+): Array of PolicyRules soft gating violations. When `MEMENTO_SYMBOLIC_POLICY_RULES=false` (default), always returns an empty array or the field is omitted. When enabled, failed predicates accumulate from the following 5:
+
+- `decisionHasRationale` — decision type lacks 2+ linked_to references or rationale keywords
+- `errorHasResolutionPath` — error type lacks cause/fix keywords or resolution_status
+- `procedureHasStepMarkers` — procedure type lacks numbered/step markers
+- `caseIdHasResolutionStatus` — fragment with a case_id has no resolution_status set
+- `assertionNotContradictory` — polarity conflict with an existing assertion
+
+Warnings are soft gates and do not block storage. When `api_keys.symbolic_hard_gate=true`, fragments triggering warnings are rejected.
 
 ---
 
