@@ -22,13 +22,13 @@ import assert from "node:assert/strict";
 const mockQuery = mock.fn();
 const mockPool  = { query: mockQuery };
 
-mock.module("/home/nirna/job/mcp/memento-mcp/lib/tools/db.js", {
+mock.module("../../lib/tools/db.js", {
   namedExports: { getPrimaryPool: () => mockPool }
 });
-mock.module("/home/nirna/job/mcp/memento-mcp/lib/logger.js", {
+mock.module("../../lib/logger.js", {
   namedExports: { logError: mock.fn(), logInfo: mock.fn(), logWarn: mock.fn() }
 });
-mock.module("/home/nirna/job/mcp/memento-mcp/lib/config.js", {
+mock.module("../../lib/config.js", {
   namedExports: {
     DEFAULT_DAILY_LIMIT:    1000,
     DEFAULT_FRAGMENT_LIMIT: 5000,
@@ -38,7 +38,7 @@ mock.module("/home/nirna/job/mcp/memento-mcp/lib/config.js", {
 
 /** mock 등록 후 getGroupKeyIds import */
 const { getGroupKeyIds } = await import(
-  "/home/nirna/job/mcp/memento-mcp/lib/admin/ApiKeyStore.js"
+  "../../lib/admin/ApiKeyStore.js"
 );
 
 /** ─────────────────────────────────────────────────────────────────
