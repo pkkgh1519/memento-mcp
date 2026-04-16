@@ -2,7 +2,7 @@
 
 ## System Architecture
 
-![System Architecture](../assets/images/memento_architecture.svg)
+![System Architecture](../assets/images/memento_architecture.en.svg)
 
 ```
 server.js  (HTTP server)
