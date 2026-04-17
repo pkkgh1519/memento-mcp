@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.8.2] - 2026-04-17
+
+### Security
+
+- **non-API-key OAuth 클라이언트의 master 권한 취약점 차단**: `is_api_key=false` OAuth 토큰으로 인증 시도 시 `keyId=null` 세션이 생성되어 모든 파편에 master 권한으로 접근할 수 있었던 취약점 차단. `MCP_REJECT_NONAPIKEY_OAUTH=false`로만 기존 동작 복원 가능. (`lib/auth.js`)
+- **OAuth auto-registration 기본 비활성화**: `/authorize`에서 미등록 `client_id`가 유효한 `redirect_uri`만 있으면 자동 등록되던 경로 차단. RFC 7591 `POST /register` 엔드포인트 경유 강제. `MCP_ALLOW_AUTO_DCR_REGISTER=true`로만 기존 동작 복원 가능. (`lib/handlers/oauth-handler.js`)
+
+### Added
+
+- **Spec compliance (세션 404)**: `sessionId` 있으나 Redis에 없고 인증도 실패한 경우, 또는 세션 expired 상태인 경우 HTTP 404 Not Found + JSON-RPC `-32000 "Session not found"` 반환. MCP 2025-06-18 스펙 요구사항 준수.
+- **Security (Origin 검증)**: `MCP_STRICT_ORIGIN=true` 설정 시 허용 목록(`OAUTH_TRUSTED_ORIGINS` + `ALLOWED_ORIGINS` + 기본 신뢰 도메인) 외 Origin에서 온 요청을 403으로 거부. DNS rebinding 공격 방어. 기본값 `false` (opt-in, 기존 동작 유지).
+- **Spec compliance (Protocol-Version)**: initialize 이후 모든 요청에서 `MCP-Protocol-Version` 헤더 검증. 헤더 없으면 2025-03-26 fallback, 미지원 버전이면 400, 세션 negotiatedVersion과 불일치하면 400. initialize 요청은 검증 생략.
+- **세션 `negotiatedVersion` 필드**: initialize 응답 완료 시 협상된 프로토콜 버전을 세션 데이터에 저장. 이후 요청의 MCP-Protocol-Version 대조에 활용.
+- **`MCP_REJECT_NONAPIKEY_OAUTH` 환경변수** (기본 `true`): non-API-key OAuth 토큰 거부 제어. `false` 설정 시 하위 호환 모드.
+- **`MCP_ALLOW_AUTO_DCR_REGISTER` 환경변수** (기본 `false`): OAuth 자동 클라이언트 등록 허용 제어. `true` 설정 시 기존 자동 등록 동작.
+- **New env**: `MCP_STRICT_ORIGIN` (기본 `false`).
+- **New metrics**: `mcp_session_404_total`, `mcp_origin_rejected_total` (label: `origin`), `mcp_protocol_version_rejected_total` (label: `version`), `mcp_oauth_nonapikey_rejected_total`, `mcp_oauth_auto_register_blocked_total`.
+
 ## [2.8.1] - 2026-04-17
 
 ### Added

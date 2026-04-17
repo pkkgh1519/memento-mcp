@@ -23,6 +23,9 @@
 | CONSOLIDATE_INTERVAL_MS | 21600000 | Auto-maintenance (consolidate) interval (ms). Default 6 hours |
 | EVALUATOR_MAX_QUEUE | 100 | MemoryEvaluator queue size cap (older jobs dropped on overflow) |
 | OAUTH_TRUSTED_ORIGINS | (none) | Additional OAuth redirect_uri trusted domains (comma-separated, origin level). Added on top of default trusted domains (claude.ai, chatgpt.com, platform.openai.com, copilot.microsoft.com, gemini.google.com). Only specify additional origins to allow |
+| MCP_STRICT_ORIGIN | false | When `true`, enables strict Origin header validation (DNS rebinding defense). Requests from Origins not in the allowlist (`OAUTH_TRUSTED_ORIGINS` + `ALLOWED_ORIGINS` + default trusted domains) are rejected with 403. Requests without an Origin header (CLI/curl) are always allowed. **opt-in** — defaults to `false` to preserve existing behavior |
+| MCP_REJECT_NONAPIKEY_OAUTH | true | Set to `false` to allow `is_api_key=false` OAuth tokens (backward compatibility). Default `true` — non-API-key OAuth tokens create a `keyId=null` session with master-level access to all fragments. API-key-based OAuth tokens (`is_api_key=true`) and Bearer ACCESS_KEY direct use are unaffected |
+| MCP_ALLOW_AUTO_DCR_REGISTER | false | Set to `true` to allow auto-registration of unregistered `client_id` in `/authorize` (legacy behavior). Default `false` — enforces RFC 7591 `POST /register` endpoint for client registration |
 | OAUTH_ALLOWED_REDIRECT_URIS | (none) | OAuth redirect_uri exact-match allowed list (comma-separated). Operates independently of OAUTH_TRUSTED_ORIGINS |
 | DEFAULT_DAILY_LIMIT | 10000 | Default daily call limit when creating API keys |
 | DEFAULT_PERMISSIONS | read,write | Default permissions when creating API keys |
