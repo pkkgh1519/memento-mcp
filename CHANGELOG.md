@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.8.1] - 2026-04-17
+
+### Added
+
+- **세션 ID 보존 복구**: `lib/sessions.js`에 `createStreamableSessionWithId(sessionId, ...)` 추가. auto-recovery 경로에서 `crypto.randomUUID()` 대신 클라이언트가 보낸 원본 `sessionId`로 세션을 재생성하여 데이터 연속성 보장.
+- **keyId 교차 검증 (403)**: 세션 복구 시 Redis의 기존 `keyId`와 재인증된 `keyId`가 불일치하면 403 Forbidden + JSON-RPC `-32000 "Forbidden"` 반환. `recordTenantIsolationBlocked("session_recover_keyid_mismatch")` 호출.
+- **Redis 세션 저장 실패 메트릭** (`mcp_redis_session_save_failure_total`, label: `operation`): Redis saveSession catch 경로에서 자동 집계.
+- **세션 복구 결과 메트릭** (`mcp_session_recovery_total`, label: `result` = `same_id_success` | `keyid_mismatch` | `not_found` | `new_session`): auto-recovery 분기 전체 관측.
+- **세션 idle reflect 메트릭** (`mcp_session_idle_reflect_total`): 24h idle autoReflect 실행 시 카운트.
+- **MCP_IDLE_REFLECT_HOURS 환경변수** (기본 24): `cleanupExpiredSessions`에서 이 시간 이상 비활성 세션에 중간 autoReflect 실행.
+- **세션 객체 `lastReflectedAt` 필드**: 마지막 reflect 시각 추적. idle reflect 중복 실행 방지.
+
+### Fixed
+
+- **Heartbeat 연속 실패 경로 autoReflect 누락**: `lib/sessions.js`의 heartbeat interval에서 `hbFailures >= SSE_MAX_HEARTBEAT_FAILURES` 시 `session.close()` 직접 호출 대신 `closeStreamableSession(sessionId)`를 경유하도록 수정. 세션 종료 시 autoReflect가 반드시 실행됨.
+
 ## [2.8.0] - 2026-04-16
 
 ### Added — Symbolic Memory Layer (opt-in, 기본 전면 비활성)

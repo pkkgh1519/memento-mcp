@@ -121,9 +121,19 @@ admin 모듈 테스트는 향후 `assets/admin/modules/*`를 직접 import하는
 
 ### 세션 자동 복구
 
-세션 스토어에서 "Session not found" 또는 "Session expired" 오류가 발생하면 서버가 재인증 흐름을 즉시 실행한다. 재인증 시 기존 세션의 `keyId`와 `groupKeyIds`를 복원하여 새 세션에 주입한다. 클라이언트 입장에서는 투명하게 연결이 유지되며, 재인증 이벤트는 audit 로그에 기록된다.
+세션 스토어에서 "Session not found" 또는 "Session expired" 오류가 발생하면 서버가 재인증 흐름을 즉시 실행한다.
+
+**v2.8.1 동일 ID 복구**: 재인증 성공 시 `crypto.randomUUID()`로 새 ID를 발급하지 않고, 클라이언트가 보낸 원본 `sessionId`를 `createStreamableSessionWithId`에 그대로 전달하여 동일 ID로 세션을 재생성한다. 클라이언트 입장에서 세션이 끊기지 않고 연속 사용 가능하다. 로그 형식: `[Streamable] Session recovered with same-id: <sessionId> (keyId: ...)`.
+
+**keyId 교차 검증**: 복구 수행 전 Redis에서 기존 세션 데이터를 조회한다. 기존 세션이 존재하고 `session.keyId !== authResult.keyId`이면 403 Forbidden을 반환하고 복구를 거부한다. `recordTenantIsolationBlocked("session_recover_keyid_mismatch")`와 `recordSessionRecovery("keyid_mismatch")`가 호출된다. Redis가 비활성화되어 있거나 기존 세션이 없으면 검증을 건너뛰고 동일 ID 복구를 진행한다.
 
 Legacy SSE 세션도 요청마다 `expiresAt`을 `now + SESSION_TTL_MS`로 갱신하는 슬라이딩 윈도우 방식을 적용한다.
+
+### 세션 idle reflect
+
+`cleanupExpiredSessions`는 만료 체크 전에 `MCP_IDLE_REFLECT_HOURS`(기본 24시간) 이상 비활성 상태인 세션에 대해 `autoReflect(sessionId)`를 실행한다. 이 기능은 장기 세션(30일 TTL)에서 중간 기억 요약이 없어 기억이 손실되는 문제를 방지한다.
+
+동작 조건: `(now - session.lastAccessedAt) > idleThresholdMs` AND (`session.lastReflectedAt`이 없거나 `(now - session.lastReflectedAt) > idleThresholdMs`). 성공 후 `session.lastReflectedAt = now`로 갱신하여 중복 실행을 방지한다. 실패해도 루프 계속. 메트릭: `mcp_session_idle_reflect_total`.
 
 ### Redis TTL 동기화
 

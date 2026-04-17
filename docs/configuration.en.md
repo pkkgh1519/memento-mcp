@@ -112,6 +112,7 @@ Sliding window: each time an OAuth-authenticated request arrives, the Redis TTL 
 | SSE_HEARTBEAT_INTERVAL_MS | 25000 | SSE heartbeat ping interval (ms). Used to verify client connection is alive |
 | SSE_MAX_HEARTBEAT_FAILURES | 3 | Consecutive heartbeat send failure tolerance. Session is automatically terminated when exceeded. Detects write backpressure and network errors |
 | SSE_RETRY_MS | 5000 | SSE reconnection wait time (ms). Sent to client via the `retry:` field |
+| MCP_IDLE_REFLECT_HOURS | 24 | Idle session intermediate autoReflect threshold (hours). Sessions inactive for this duration receive a mid-session reflect during cleanup to prevent memory loss. |
 
 ### PostgreSQL
 
