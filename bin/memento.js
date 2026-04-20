@@ -3,18 +3,19 @@ import "dotenv/config";
 import { parseArgs } from '../lib/cli/parseArgs.js';
 
 const COMMANDS = {
-  serve:     () => import('../lib/cli/serve.js'),
-  migrate:   () => import('../lib/cli/migrate.js'),
-  cleanup:   () => import('../lib/cli/cleanup.js'),
-  backfill:  () => import('../lib/cli/backfill.js'),
-  stats:     () => import('../lib/cli/stats.js'),
-  health:    () => import('../lib/cli/health.js'),
-  recall:    () => import('../lib/cli/recall.js'),
-  remember:  () => import('../lib/cli/remember.js'),
-  inspect:   () => import('../lib/cli/inspect.js'),
-  update:    () => import('../lib/cli/update.js'),
-  export:    () => import('../lib/cli/export.js'),
-  import:    () => import('../lib/cli/import.js'),
+  serve:      () => import('../lib/cli/serve.js'),
+  migrate:    () => import('../lib/cli/migrate.js'),
+  cleanup:    () => import('../lib/cli/cleanup.js'),
+  backfill:   () => import('../lib/cli/backfill.js'),
+  stats:      () => import('../lib/cli/stats.js'),
+  health:     () => import('../lib/cli/health.js'),
+  recall:     () => import('../lib/cli/recall.js'),
+  remember:   () => import('../lib/cli/remember.js'),
+  inspect:    () => import('../lib/cli/inspect.js'),
+  update:     () => import('../lib/cli/update.js'),
+  export:     () => import('../lib/cli/export.js'),
+  import:     () => import('../lib/cli/import.js'),
+  completion: () => import('../lib/cli/completion.js'),
 };
 
 /** 원격 모드를 지원하지 않는 로컬 전용 명령 목록 */
@@ -37,6 +38,7 @@ function printUsage() {
     '  update [--execute] [--redetect]  Check and apply updates (default: dry-run)',
     '  export [--topic x] [--type t]   Export fragments as JSONL to stdout or file',
     '  import [--input FILE]            Import fragments from JSONL file or stdin',
+    '  completion <shell>               Print shell completion script (bash|zsh)',
     '',
     'Options:',
     '  --help                      Show this help message',
