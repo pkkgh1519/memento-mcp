@@ -19,10 +19,15 @@
 
 import { describe, it } from "node:test";
 import assert           from "node:assert/strict";
-import { MemoryManager } from "../../lib/memory/MemoryManager.js";
+import { MemoryRememberer } from "../../lib/memory/processors/MemoryRememberer.js";
 
-describe("MemoryManager.remember — R12 TDZ regression guard", () => {
-  const src = MemoryManager.prototype.remember.toString();
+/**
+ * Phase 5-B 분해 이후 remember 본문은 `lib/memory/processors/MemoryRememberer.js`로
+ * 이관됐다. MemoryManager.prototype.remember는 이제 얇은 위임이므로
+ * TDZ 회귀 가드는 MemoryRememberer.prototype.remember를 대상으로 한다.
+ */
+describe("MemoryRememberer.remember — R12 TDZ regression guard", () => {
+  const src = MemoryRememberer.prototype.remember.toString();
 
   it("declares const fragment before referencing it in the atomic branch", () => {
     const fragDeclIdx = src.indexOf("const fragment = this.factory.create");
