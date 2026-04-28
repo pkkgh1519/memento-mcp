@@ -4,7 +4,7 @@
  *
  * 작성자: 최진호
  * 작성일: 2026-03-07
- * 수정일: 2026-04-20 (v2.12.0 문서 현행화 반영)
+ * 수정일: 2026-04-29 (v3.2.0: EmbeddingWorker batch 경로 사용)
  *
  * 목적: agent_memory.fragments 테이블에서 embedding IS NULL인 파편에 임베딩 벡터를 일괄 생성한다.
  * 호출 조건: EMBEDDING_PROVIDER 변경 후 기존 파편 재임베딩, 임베딩 API 장애 복구 후 누락 파편 처리
@@ -60,7 +60,7 @@ async function main() {
           "write"
         );
         total++;
-        process.stdout.write(`\rEmbedded: ${total} (failed: ${failed})`);
+        process.stdout.write(`\rEmbedded: ${total} (failed: ${failed}) [_embedMany batch 1회 처리 누적]`);
       } catch (err) {
         failed++;
         console.warn(`\nFailed ${row.id}: ${err.message}`);
