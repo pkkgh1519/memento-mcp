@@ -4,7 +4,7 @@ export default [
   { ignores: ["node_modules/**", ".worktrees/**"] },
   js.configs.recommended,
   {
-    files: ["**/*.{js,mjs,cjs}"],
+    files: ["**/*.js"],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "module",
@@ -13,16 +13,9 @@ export default [
         console:       "readonly",
         Buffer:        "readonly",
         setTimeout:    "readonly",
-        setImmediate:  "readonly",
         clearTimeout:  "readonly",
-        clearImmediate:"readonly",
         setInterval:   "readonly",
         clearInterval: "readonly",
-        global:        "readonly",
-        globalThis:    "readonly",
-        performance:   "readonly",
-        crypto:        "readonly",
-        structuredClone:"readonly",
         URL:             "readonly",
         URLSearchParams: "readonly",
         fetch:           "readonly",
@@ -32,7 +25,6 @@ export default [
     },
     rules: {
       "no-unused-vars": ["warn", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_", "caughtErrorsIgnorePattern": "^_" }],
-      "no-empty": ["error", { "allowEmptyCatch": true }],
       "no-undef": "error"
     }
   },
