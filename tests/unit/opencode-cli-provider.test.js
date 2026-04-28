@@ -19,6 +19,7 @@ mock.module("../../lib/opencode.js", {
 
 const { OpenCodeCliProvider } = await import("../../lib/llm/providers/OpenCodeCliProvider.js");
 const { createProvider, listProviderNames } = await import("../../lib/llm/registry.js");
+const { getConcurrencyLimit } = await import("../../lib/config.js");
 
 describe("OpenCodeCliProvider", () => {
   beforeEach(() => {
@@ -122,5 +123,9 @@ describe("opencode-cli registry wiring", () => {
     assert.equal(provider?.config?.timeoutMs, 2222);
     assert.equal(provider?.config?.agent, "general");
     assert.equal(provider?.config?.variant, "low");
+  });
+
+  it("getConcurrencyLimit: opencode-cli 기본 동시성은 다른 로컬 CLI처럼 1이다", () => {
+    assert.equal(getConcurrencyLimit("opencode-cli||", "opencode-cli"), 1);
   });
 });
