@@ -2,9 +2,9 @@
 
 ## MemoryManager (Orchestration Layer)
 
-In v2.5.2, MemoryManager was reduced from 1,790 lines to 904 lines. In v2.10.0 (Phase 5-B), it was finally decomposed into a 259-line thin facade. Business logic is delegated to 4 processors under `lib/memory/processors/`.
+MemoryManager is a 259-line thin facade. Business logic is delegated to 4 processors under `lib/memory/processors/`.
 
-**v2.10.0 decomposition result:**
+**Processor decomposition:**
 
 | Processor | Delegated operations | Lines |
 |-----------|---------------------|-------|
@@ -31,16 +31,16 @@ In v2.5.2, MemoryManager was reduced from 1,790 lines to 904 lines. In v2.10.0 (
 
 **reflect resolution_status auto-setting:** ReflectProcessor automatically assigns resolution_status to reflect-generated fragments. `errors_resolved` items receive `resolutionStatus: "resolved"`, and `open_questions` items receive `resolutionStatus: "open"`. All reflect-generated fragments also propagate `sessionId` for session-level tracking.
 
-**remember() pipeline structure (v2.11.0):**
+**remember() pipeline structure:**
 
 ```
 remember(params)
-  ├── [NEW v2.11.0] dryRun branch — early return before atomic guard declaration
+  ├── dryRun branch — early return before atomic guard declaration
   │     params.dryRun === true → computes validationResult without storing
   │     returns { dryRun: true, wouldStore: true/false, reason, params }
   ├── atomic guard — atomicRemember && keyId condition
   ├── QuotaChecker.check() — conditional on !(atomicRemember && keyId)
-  ├── [NEW v2.11.0] idempotency branch — when params.idempotencyKey is present
+  ├── idempotency branch — when params.idempotencyKey is present
   │     FragmentReader.findByIdempotencyKey(key, keyId) lookup
   │     if existing fragment found → early return { id, idempotent: true }
   ├── FragmentWriter.insert() — actual fragment storage
@@ -48,7 +48,7 @@ remember(params)
   └── RememberPostProcessor.run() — embedding/morpheme/link/eval post-processing
 ```
 
-The `dryRun` branch is positioned before the atomic guard declaration (before `fragment` variable TDZ). The R12 hotfix (v2.10.1) moved the atomic branch to after the `fragment` declaration, resolving the TDZ. The v2.11.0 dryRun branch follows the same placement.
+The `dryRun` branch is positioned before the atomic guard declaration (before `fragment` variable TDZ). The atomic branch sits after the `fragment` declaration, resolving the TDZ, and the dryRun branch follows the same placement.
 
 **recall() pipeline — fields pick position:**
 
@@ -62,10 +62,10 @@ recall(query)
   ├── RRF merge (k=60)
   ├── token budget truncation (tokenBudget)
   ├── valid_to filter
-  ├── Phase 2 explanations (ExplanationBuilder.annotate)
-  ├── Phase 5 CBR filter (cbrEligibility.filter, when sq.caseId present)
+  ├── explanations (ExplanationBuilder.annotate)
+  ├── CBR filter (cbrEligibility.filter, when sq.caseId present)
   ├── trimmed.map(({ _rrfScore, ...rest }) => rest)  — strip internal scores
-  ├── [NEW v2.11.0] pickFields(query.fields)  — sparse fieldset
+  ├── pickFields(query.fields)  — sparse fieldset
   │     when query.fields is not specified, all fields returned (backward compat)
   │     L1/L2/RRF cache stages retain full fields; pick is applied only at final return
   └── SearchEventRecorder.record() — event recording
@@ -113,7 +113,7 @@ An 18-step maintenance pipeline that runs when the memory_consolidate tool is in
 
 ### compressOldFragments (KNN Batch Parallelization)
 
-`ConsolidatorGC.compressOldFragments()` groups long-unaccessed, low-importance fragments by topic, then forms similarity groups via KNN (cosine >= 0.80) and compresses them into representative fragments. In v2.5.2, the KNN neighbor lookup was converted from sequential N+1 queries to `BATCH_SIZE=20` unit `Promise.all` parallelism. Within each batch, pgvector KNN queries for each fragment execute concurrently, significantly reducing processing time compared to linear execution as the number of target fragments grows. Individual query failures are isolated via `.catch(() => ({ rows: [] }))` so they do not block the entire batch.
+`ConsolidatorGC.compressOldFragments()` groups long-unaccessed, low-importance fragments by topic, then forms similarity groups via KNN (cosine >= 0.80) and compresses them into representative fragments. The KNN neighbor lookup uses `BATCH_SIZE=20` unit `Promise.all` parallelism. Within each batch, pgvector KNN queries for each fragment execute concurrently, significantly reducing processing time compared to linear execution as the number of target fragments grows. Individual query failures are isolated via `.catch(() => ({ rows: [] }))` so they do not block the entire batch.
 
 ---
 
@@ -145,7 +145,7 @@ Only operates on the `tools/call` method. First deletes client-sent `_keyId`, `_
 
 ### AdminEsmLoadError Sentinel Pattern
 
-`tests/unit/admin-test-helper.js`'s `loadAdmin()` loads `assets/admin/admin.js` via Node.js `vm.runInContext`. After admin.js was converted to an ESM entry point (with import/export statements) in v2.5.7, the vm sandbox throws a SyntaxError because it does not support ESM syntax.
+`tests/unit/admin-test-helper.js`'s `loadAdmin()` loads `assets/admin/admin.js` via Node.js `vm.runInContext`. Because admin.js is an ESM entry point (with import/export statements), the vm sandbox throws a SyntaxError since it does not support ESM syntax.
 
 To handle this explicitly, `AdminEsmLoadError` is thrown when an ESM file is detected. Test files catch this error and switch to `describe.skip`. The guard distinguishing real errors from the sentinel:
 
@@ -383,9 +383,9 @@ Temporal axis (valid_from/valid_to, superseded_by) preserves existing data
 
 ---
 
-## Smart Recall (v2.5.6)
+## Smart Recall
 
-Three auto-learning subsystems were added to the remember/recall pipeline.
+Three auto-learning subsystems operate in the remember/recall pipeline.
 
 ### ProactiveRecall (RememberPostProcessor)
 
@@ -418,7 +418,7 @@ Records result counts for each search call in the `search_param_thresholds` tabl
 
 ---
 
-## Symbolic Memory Layer Internals (v2.8.0)
+## Symbolic Memory Layer Internals
 
 The Symbolic Memory Layer section in architecture.md covers the overall design. This chapter focuses on implementation details of each module.
 
@@ -444,7 +444,7 @@ Four helper methods unify external calls: `recordClaim(extractor, polarity)`, `r
 
 ### ClaimStore
 
-`lib/symbolic/ClaimStore.js`. Uses `TEXT key_id` and applies `key_id IS NOT DISTINCT FROM $N` pattern for tenant isolation in all queries. This operator treats NULL=NULL as true, handling master (NULL) and tenant (TEXT) in a single branch without divergence. The `(key_id IS NULL OR key_id = $N)` pattern prohibited since v2.5.7 is not used.
+`lib/symbolic/ClaimStore.js`. Uses `TEXT key_id` and applies `key_id IS NOT DISTINCT FROM $N` pattern for tenant isolation in all queries. This operator treats NULL=NULL as true, handling master (NULL) and tenant (TEXT) in a single branch without divergence. The prohibited `(key_id IS NULL OR key_id = $N)` pattern is not used.
 
 At the `insert` entry point, a `fragment.key_id !== ctx.keyId` mismatch is checked and a `TENANT_ISOLATION_VIOLATION` exception is thrown. `findPolarityConflicts` queries positive↔negative pairs on the same (subject, predicate, COALESCE(object,'')) tuple based on a confidence threshold. Two partial unique indexes replicated in migration-032 (one for master NULL, one for tenant TEXT) block cross-tenant leakage through the ON CONFLICT path.
 
@@ -454,7 +454,7 @@ At the `insert` entry point, a `fragment.key_id !== ctx.keyId` mismatch is check
 
 ### LinkIntegrityChecker
 
-`lib/symbolic/LinkIntegrityChecker.js`. Reuses the `sessionLinker.wouldCreateCycle(fromId, toId, agentId, keyId)` 4-arg signature. Adding this signature in Phase 0.5 allowed Phase 3 implementation to reuse existing code. `DIRECTIONAL_RELATIONS = {caused_by, resolved_by, superseded_by, preceded_by}` — types outside this set early-return, avoiding unnecessary cycle checks for undirected links. Advisory only: `hasCycle=true` does not block. DI: `({ sessionLinker })`.
+`lib/symbolic/LinkIntegrityChecker.js`. Reuses the `sessionLinker.wouldCreateCycle(fromId, toId, agentId, keyId)` 4-arg signature. `DIRECTIONAL_RELATIONS = {caused_by, resolved_by, superseded_by, preceded_by}` — types outside this set early-return, avoiding unnecessary cycle checks for undirected links. Advisory only: `hasCycle=true` does not block. DI: `({ sessionLinker })`.
 
 ### ExplanationBuilder
 
@@ -489,7 +489,7 @@ At the `insert` entry point, a `fragment.key_id !== ctx.keyId` mismatch is check
 
 ### RememberPostProcessor 8-Stage Pipeline and _extractSymbolicClaims Invocation Path
 
-The `run()` method in `lib/memory/RememberPostProcessor.js` executes 8 stages sequentially. Stage 8 is Symbolic claim extraction (Phase 1), proceeding as `this._symbolicClaimPromise = this._extractSymbolicClaims(...).catch(...)` fire-and-forget. It does not block the main pipeline; failures do not affect memory storage.
+The `run()` method in `lib/memory/RememberPostProcessor.js` executes 8 stages sequentially. Stage 8 is Symbolic claim extraction, proceeding as `this._symbolicClaimPromise = this._extractSymbolicClaims(...).catch(...)` fire-and-forget. It does not block the main pipeline; failures do not affect memory storage.
 
 `_extractSymbolicClaims(fragment, { agentId, keyId })`: `SYMBOLIC_CONFIG.enabled && SYMBOLIC_CONFIG.claimExtraction` guard → `ClaimExtractor.extract` → `ClaimStore.insert`. TENANT_ISOLATION_VIOLATION exceptions call `symbolicMetrics.recordGateBlock("claim_extraction", "tenant_violation")` and are then swallowed. On successful claim, `symbolicMetrics.recordClaim(extractor, polarity)` is called.
 
@@ -502,11 +502,11 @@ Three hooks execute in order after line 88 in `lib/memory/FragmentSearch.js`:
 
 ### ConflictResolver.checkAssertionConsistency and validationWarnings Addition
 
-`checkAssertionConsistency` in `lib/memory/ConflictResolver.js` preserves the existing Jaccard pipeline (`JACCARD_THRESHOLD=0.3`, up to 10 fragments within a 7-day window) while adding Phase 3 symbolic polarity conflict results alongside it. Within the `SYMBOLIC_CONFIG.enabled && SYMBOLIC_CONFIG.polarityConflict` guard, `ClaimConflictDetector.detectPolarityConflicts` is called; exceptions are logged with logWarn and swallowed. `conflictWith` IDs found in polarity conflicts are merged into the existing `supersedeCandidates`. The return type is extended to a 3-tuple `{ assertionStatus, supersedeCandidates, validationWarnings }`, returning `validationWarnings: []` as an empty array when the flag is off.
+`checkAssertionConsistency` in `lib/memory/ConflictResolver.js` preserves the existing Jaccard pipeline (`JACCARD_THRESHOLD=0.3`, up to 10 fragments within a 7-day window) while appending symbolic polarity conflict results alongside it. Within the `SYMBOLIC_CONFIG.enabled && SYMBOLIC_CONFIG.polarityConflict` guard, `ClaimConflictDetector.detectPolarityConflicts` is called; exceptions are logged with logWarn and swallowed. `conflictWith` IDs found in polarity conflicts are merged into the existing `supersedeCandidates`. The return type is extended to a 3-tuple `{ assertionStatus, supersedeCandidates, validationWarnings }`, returning `validationWarnings: []` as an empty array when the flag is off.
 
 ---
 
-## Mode System Internals (v2.9.0)
+## Mode System Internals
 
 ### ModeRegistry Initialization
 
@@ -539,7 +539,7 @@ When assembling the `get_skill_guide` response, `getSkillGuideOverride(presetNam
 
 ---
 
-## RecallSuggestionEngine Internals (v2.9.0)
+## RecallSuggestionEngine Internals
 
 `lib/memory/RecallSuggestionEngine.js`. Called after `MemoryManager.recall()` completes in a fail-open manner. On exception, returns null so the recall response itself is unaffected.
 
@@ -556,9 +556,9 @@ The `repeat_query` rule queries the `search_events` table for events in the past
 
 ---
 
-## Affective Tagging Internals (v2.9.0)
+## Affective Tagging Internals
 
-`fragments.affect` column (migration-034-v2.16.0-bundle). Allowed enum: `neutral | frustration | confidence | surprise | doubt | satisfaction`. Default: `neutral`.
+`fragments.affect` column (migration-034). Allowed enum: `neutral | frustration | confidence | surprise | doubt | satisfaction`. Default: `neutral`.
 
 - **Write path**: `FragmentWriter` calls `sanitizeAffect(value)` to coerce any value outside the allowed enum to `neutral` before INSERT/UPDATE.
 - **Search filter**: `FragmentReader` search methods accept an `affect` parameter. A single string applies `= $N`; an array applies `= ANY($N::text[])`.
@@ -566,7 +566,7 @@ The `repeat_query` rule queries the `search_events` table for events in the past
 
 ---
 
-## Tool Meta Registry Internals (v2.9.0)
+## Tool Meta Registry Internals
 
 Each MCP tool definition now includes a `meta` field, automatically included in `tools/list` responses.
 
@@ -582,7 +582,7 @@ The `GET /openapi.json` endpoint also reflects this metadata. Clients can use `r
 
 ---
 
-## Token-Based Session Reuse Internals (v2.9.0)
+## Token-Based Session Reuse Internals
 
 When the same Bearer token is used for consecutive `initialize` requests, the server reuses the existing active session instead of creating a new one.
 
@@ -607,7 +607,7 @@ Redis key TTL is synchronized with session TTL (default 30-day sliding). When Re
 
 ---
 
-## Local transformers Embedding Pipeline Internals (v2.9.0)
+## Local transformers Embedding Pipeline Internals
 
 When `EMBEDDING_PROVIDER=transformers` is set, `lib/embeddings/LocalTransformersEmbedder.js` handles embedding generation.
 

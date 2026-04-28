@@ -1,5 +1,8 @@
 # Architecture
 
+작성자: 최진호
+수정일: 2026-04-29
+
 ## 시스템 구조
 
 ![시스템 아키텍처](../assets/images/memento_architecture.svg)
@@ -37,7 +40,7 @@ server.js  (HTTP 서버)
             ├── EmbeddingCache.js         쿼리 임베딩 Redis 캐시 (emb:q:{sha256} 키, TTL 1시간, 장애 격리)
             ├── FragmentFactory.js        파편 생성, 유효성 검증, PII 마스킹
             ├── FragmentStore.js          PostgreSQL CRUD 파사드 (FragmentReader + FragmentWriter 위임)
-            ├── FragmentReader.js         파편 읽기. `getById(id, agentId, keyId, groupKeyIds)` — v2.7.0: groupKeyIds 파라미터 추가로 그룹 소속 키의 파편도 단일 호출로 조회. `getByIds`, `getHistory`, `searchByKeywords`, `searchBySemantic`
+            ├── FragmentReader.js         파편 읽기. `getById(id, agentId, keyId, groupKeyIds)` — groupKeyIds 파라미터로 그룹 소속 키의 파편도 단일 호출로 조회. `getByIds`, `getHistory`, `searchByKeywords`, `searchBySemantic`
             ├── FragmentWriter.js         파편 쓰기 (insert, update, delete, incrementAccess, touchLinked)
             ├── FragmentSearch.js         3계층 검색 조율 (구조적: L1→L2, 시맨틱: L1→L2‖L3 RRF 병합)
             ├── FragmentIndex.js          Redis L1 인덱스 관리, getFragmentIndex() 싱글톤 팩토리
@@ -98,17 +101,18 @@ server.js  (HTTP 서버)
             ├── migration-023-link-weight-float.sql    fragment_links.weight integer→real (TemporalLinker float 가중치 지원)
             ├── migration-024-workspace.sql            fragments.workspace + api_keys.default_workspace 컬럼, 인덱스 2개
             ├── migration-025-case-id-episode.sql      fragments narrative reconstruction 컬럼 (case_id, goal, outcome, phase, resolution_status, assertion_status)
-            ├── migration-026-case-events.sql          case_events + case_event_edges + fragment_evidence 테이블 (Narrative Reconstruction Phase 3)
+            ├── migration-026-case-events.sql          case_events + case_event_edges + fragment_evidence 테이블 (Narrative Reconstruction)
             ├── migration-027-v25-reconsolidation-episode-spreading.sql  search_events/case_events key_id 타입 수정, fragment_links 재통합 컬럼 + link_reconsolidations 테이블, case_events idempotency_key, fragments.keywords GIN 인덱스
             ├── migration-028-composite-indexes.sql  (agent_id, topic, created_at DESC) 복합 인덱스 + (key_id, agent_id, importance DESC) 부분 인덱스 (QuotaChecker/FragmentReader 최적화)
             ├── migration-029-search-param-thresholds.sql  search_param_thresholds 테이블 (SearchParamAdaptor 온라인 학습 저장소, key_id NOT NULL DEFAULT -1)
             ├── migration-030-search-param-thresholds-key-text.sql  search_param_thresholds.key_id INTEGER→TEXT 변환 (fragments.key_id TEXT 타입과 통일, sentinel -1 → '-1')
             ├── migration-031-content-hash-per-key.sql  content_hash 전역 UNIQUE 인덱스 폐기 후 partial unique index 2개로 전환 (크로스 테넌트 ON CONFLICT 차단): uq_frag_hash_master (key_id IS NULL), uq_frag_hash_per_key (key_id IS NOT NULL, 복합)
-            ├── migration-032-fragment-claims.sql        Symbolic Memory Layer — fragment_claims 테이블 (v2.8.0)
-            ├── migration-033-symbolic-hard-gate.sql     api_keys.symbolic_hard_gate BOOLEAN DEFAULT false (v2.8.0)
-            ├── migration-034-api-keys-default-mode.sql  api_keys.default_mode TEXT NULL — Mode preset 키 단위 기본값 (v2.9.0)
-            ├── migration-034-v2.16.0-bundle-fragments-affect.sql       fragments.affect TEXT DEFAULT 'neutral' CHECK 제약 6 enum (v2.9.0)
-            └── migration-034-v2.16.0-bundle-idempotency-key.sql        fragments.idempotency_key TEXT NULL + partial UNIQUE 2종: (key_id, idempotency_key) WHERE idempotency_key IS NOT NULL AND key_id IS NOT NULL / (idempotency_key) WHERE idempotency_key IS NOT NULL AND key_id IS NULL (v2.11.0)
+            ├── migration-032-fragment-claims.sql        Symbolic Memory Layer — fragment_claims 테이블
+            ├── migration-033-symbolic-hard-gate.sql     api_keys.symbolic_hard_gate BOOLEAN DEFAULT false
+            ├── migration-034-api-keys-default-mode.sql  api_keys.default_mode TEXT NULL — Mode preset 키 단위 기본값
+            ├── migration-034-v2.16.0-bundle-fragments-affect.sql       fragments.affect TEXT DEFAULT 'neutral' CHECK 제약 6 enum
+            ├── migration-034-v2.16.0-bundle-idempotency-key.sql        fragments.idempotency_key TEXT NULL + partial UNIQUE 2종: (key_id, idempotency_key) WHERE idempotency_key IS NOT NULL AND key_id IS NOT NULL / (idempotency_key) WHERE idempotency_key IS NOT NULL AND key_id IS NULL
+            └── migration-035-morpheme-indexed.sql                      fragments.morpheme_indexed BOOLEAN NOT NULL DEFAULT false + 부분 인덱스(WHERE morpheme_indexed = false) + 기존 파편 백필
 ```
 
 지원 모듈:
@@ -211,9 +215,9 @@ scripts/
 
 ---
 
-## MemoryManager Facade 분해 (v2.10.0)
+## MemoryManager Facade 분해
 
-v2.10.0에서 MemoryManager는 1252줄에서 259줄의 thin facade로 축소되었다. 비즈니스 로직은 `lib/memory/processors/` 하위 4개 processor로 분리되었다.
+MemoryManager는 259줄의 thin facade이며 비즈니스 로직은 `lib/memory/processors/` 하위 4개 processor로 분리되어 있다.
 
 ```
 MemoryManager (259줄, facade)
@@ -240,7 +244,7 @@ Object.defineProperty(this, 'store', {
 
 ---
 
-## Idempotency (v2.11.0, migration-034-v2.16.0-bundle)
+## Idempotency (migration-034-v2.16.0-bundle)
 
 `fragments` 테이블에 `idempotency_key TEXT NULL` 컬럼이 추가되고 partial UNIQUE 인덱스 2종이 생성되었다.
 
@@ -253,7 +257,7 @@ Object.defineProperty(this, 'store', {
 
 ---
 
-## Rate Limit 헤더 (v2.12.0)
+## Rate Limit 헤더
 
 `QuotaChecker.getUsage(keyId)`는 API 키별 파편 사용량을 조회한다. 응답 결과는 모듈 레벨 인메모리 Map에 10초 TTL로 캐싱되어 반복 DB 조회를 차단한다 (상한 1000 항목).
 
@@ -269,7 +273,7 @@ X-RateLimit-Resource:  fragments
 
 ---
 
-## 원격 CLI (v2.12.0, M1)
+## 원격 CLI
 
 `lib/cli/_mcpClient.js`는 CLI 서브명령(`recall`, `remember`, `inspect` 등)이 로컬 서버 없이 원격 MCP 엔드포인트에 접속할 수 있도록 한다.
 
@@ -446,7 +450,7 @@ erDiagram
 | phase | TEXT | | 케이스의 현재 단계 레이블 |
 | resolution_status | TEXT | CHECK | 케이스 해결 상태: open(진행 중) / resolved(해결됨) / wont_fix(미해결 종료) |
 | assertion_status | TEXT | CHECK | 파편 주장 신뢰도: observed(기본, 직접 관측) / inferred(추론) / verified(검증됨) / rejected(기각됨) |
-| affect | TEXT | CHECK, DEFAULT 'neutral' | 기억 당시의 정서 상태 태그. neutral / frustration / confidence / surprise / doubt / satisfaction. migration-034-v2.16.0-bundle 추가 |
+| affect | TEXT | CHECK, DEFAULT 'neutral' | 기억 당시의 정서 상태 태그. neutral / frustration / confidence / surprise / doubt / satisfaction |
 
 인덱스 목록: content_hash(UNIQUE), topic(B-tree), type(B-tree), keywords(GIN), importance DESC(B-tree), created_at DESC(B-tree), agent_id(B-tree), linked_to(GIN), (ttl_tier, created_at)(B-tree), source(B-tree), verified_at(B-tree), is_anchor WHERE TRUE(부분 인덱스), valid_from(B-tree), (topic, type) WHERE valid_to IS NULL(부분 인덱스), id WHERE valid_to IS NULL(부분 UNIQUE). `idx_fragments_key_workspace` (key_id, workspace) WHERE valid_to IS NULL (복합 부분 인덱스 — API 키 + workspace 동시 필터 최적화), `idx_fragments_workspace` (workspace) WHERE workspace IS NOT NULL AND valid_to IS NULL (workspace 단독 전체 조회용 부분 인덱스).
 
@@ -916,30 +920,30 @@ recall 호출 시 `contextText` 파라미터를 전달하면 관련 파편의 `e
 
 ---
 
-## Symbolic Memory Layer (v2.8.0, opt-in)
+## Symbolic Memory Layer (opt-in)
 
-v2.7.0 확률론적 검색 파이프라인 위에 얹은 검증·해설 계층. 기본 전면 비활성. 기존 컴포넌트 대체 없음.
+확률론적 검색 파이프라인 위에 얹은 검증·해설 계층. 기본 전면 비활성. 기존 컴포넌트 대체 없음.
 
 ### 원칙
 
 - 검증만 담당. FragmentSearch/RRF/Reranker/SpreadingActivation 경로는 불변
-- 모든 플래그 기본 false → 기본값 상태에서 v2.7.0 동작 바이트 단위 동일
+- 모든 플래그 기본 false → 기본값 상태에서 기존 확률론적 경로 동작 바이트 단위 동일
 - Fail-open: detector 오류는 swallow, SymbolicOrchestrator timeout(50ms) 초과 시 fallback
-- Tenant isolation: v2.7.0 14건 수정 + v2.8.0 Phase 0.5 SessionLinker 보완(4-arg) = 전수 커버
+- Tenant isolation: SessionLinker.wouldCreateCycle 포함 14건 전수 커버
 
 ### Hook Chain (FragmentSearch.search 라인 88 이후)
 
 ```
 probabilistic result
     │
-    ├── shadow hook (Phase 1: observeLatency 기록만)
+    ├── shadow hook (observeLatency 기록만)
     │
-    ├── explain hook (Phase 2: ExplanationBuilder.annotate)
+    ├── explain hook (ExplanationBuilder.annotate)
     │       └── 6 reason codes: direct_keyword_match / semantic_similarity
     │           / graph_neighbor_1hop / temporal_proximity
     │           / case_cohort_member / recent_activity_ema
     │
-    ├── cbr filter (Phase 5: CbrEligibility 4 제약)
+    ├── cbr filter (CbrEligibility 4 제약)
     │       └── tenant_match / has_case_id / not_quarantine / resolved_state
     │
     └── annotated result → caller
@@ -947,17 +951,17 @@ probabilistic result
 
 ### 9 Core Modules + 5 Rule Files
 
-| 모듈 | 역할 | Phase |
-|------|------|-------|
-| SymbolicOrchestrator | rule_version / correlation_id / timeout / fallback 관리 | 0 |
-| SymbolicMetrics | prom-client 4종 (claim/warning/gate_blocked/latency) | 0 |
-| ClaimExtractor | 형태소 기반 polarity claim 추출 | 1 |
-| ClaimStore | TEXT key_id + `IS NOT DISTINCT FROM` 격리 | 1 |
-| ClaimConflictDetector | polarity 충돌 + severity heuristic | 3 |
-| LinkIntegrityChecker | cycle 탐지 (sessionLinker.wouldCreateCycle 재사용) | 3 |
-| ExplanationBuilder | 6 reason codes annotate (불변 복사) | 2 |
-| PolicyRules | 5 predicate soft gating | 4 |
-| CbrEligibility | 4 제약 CBR 필터 | 5 |
+| 모듈 | 역할 |
+|------|------|
+| SymbolicOrchestrator | rule_version / correlation_id / timeout / fallback 관리 |
+| SymbolicMetrics | prom-client 4종 (claim/warning/gate_blocked/latency) |
+| ClaimExtractor | 형태소 기반 polarity claim 추출 |
+| ClaimStore | TEXT key_id + `IS NOT DISTINCT FROM` 격리 |
+| ClaimConflictDetector | polarity 충돌 + severity heuristic |
+| LinkIntegrityChecker | cycle 탐지 (sessionLinker.wouldCreateCycle 재사용) |
+| ExplanationBuilder | 6 reason codes annotate (불변 복사) |
+| PolicyRules | 5 predicate soft gating |
+| CbrEligibility | 4 제약 CBR 필터 |
 
 Rule files (`lib/symbolic/rules/v1/`): `explain.js`, `link-integrity.js`, `claim-conflict.js`, `policy.js`, `proactive-gate.js`
 
@@ -965,7 +969,7 @@ Rule files (`lib/symbolic/rules/v1/`): `explain.js`, `link-integrity.js`, `claim
 
 **migration-032: fragment_claims**
 - `fragment_id TEXT REFERENCES fragments(id)`
-- `key_id TEXT` (v2.7.0 migration-031 content-hash 패턴 복제)
+- `key_id TEXT` (migration-031 content-hash 패턴과 동일 구조)
 - `rule_version TEXT`
 - `polarity TEXT`, `subject TEXT`, `predicate TEXT`
 - `validation_warnings JSONB`
@@ -985,15 +989,15 @@ Prometheus 메트릭 4종 (label: `rule`, `phase`):
 
 ### 단계적 활성화
 
-CHANGELOG.md v2.8.0 Migration Guide 8단계 참조.
+CHANGELOG.md Migration Guide 참조.
 
-### Tenant Isolation (Phase 0.5)
+### Tenant Isolation
 
-v2.7.0 9260ff2 tenant isolation 수정이 놓친 SessionLinker.wouldCreateCycle 사각지대를 봉인했다. `store.isReachable` 4-arg 시그니처로 확장, 호출부 4곳(`autoLinkSessionFragments`, `ReflectProcessor`, `MemoryManager._autoLinkSessionFragments`, `_wouldCreateCycle`) 전수 전파. 회귀 가드는 `tests/unit/tenant-isolation.test.js`에 6건 신규.
+SessionLinker.wouldCreateCycle의 tenant isolation 사각지대가 봉인되어 있다. `store.isReachable` 4-arg 시그니처로 확장, 호출부 4곳(`autoLinkSessionFragments`, `ReflectProcessor`, `MemoryManager._autoLinkSessionFragments`, `_wouldCreateCycle`) 전수 전파. 회귀 가드: `tests/unit/tenant-isolation.test.js` 6건.
 
 ---
 
-## v2.9.0 신규 컴포넌트
+## 추가 컴포넌트
 
 ### ModeRegistry
 
@@ -1048,7 +1052,7 @@ LocalTransformersEmbedder.generate(text)
 
 ### LLM Dispatcher — CLI Providers
 
-기존 CLI fallback chain에서 `codex-cli` provider는 `model` / `timeoutMs` 설정을 실제 CLI 호출까지 전달하도록 정리되었고, `qwen-cli` provider가 새로 추가되었다.
+`codex-cli` provider는 `model` / `timeoutMs` 설정을 실제 CLI 호출까지 전달한다. `qwen-cli` provider도 지원된다.
 
 ```
 LLM_PRIMARY=gemini-cli
@@ -1077,7 +1081,7 @@ LLM_PRIMARY=gemini-cli
 - `geminiTimeoutMs: 60000` (이전 15000에서 상향). Gemini CLI 대형 프롬프트의 지연 증가 대응
 - circuit breaker 실패 임계(LLM_CB_FAILURE_THRESHOLD=5), OPEN 지속(LLM_CB_OPEN_DURATION_MS=60000)은 기존과 동일
 
-**LLM_PRIMARY 허용값 전체 목록** (v2.9.0):
+**LLM_PRIMARY 허용값 전체 목록**:
 `gemini-cli`, `anthropic`, `openai`, `google-gemini-api`, `groq`, `openrouter`, `xai`, `ollama`, `vllm`, `deepseek`, `mistral`, `cohere`, `zai`, `codex-cli`, `copilot-cli`, `qwen-cli`
 
 ### 검색 파이프라인 — _suggestion 후처리
@@ -1091,10 +1095,10 @@ L1 + L2 + L2.5 + L3
 RRF 병합 + 복합 랭킹
     │
     ▼
-Symbolic hook chain (v2.8.0)
+Symbolic hook chain
     │
     ▼
-RecallSuggestionEngine.analyze()  ← v2.9.0 신규
+RecallSuggestionEngine.analyze()
     │
     ├── _suggestion 생성 (감지된 규칙 있을 때)
     └── null (정상 패턴일 때)
@@ -1103,7 +1107,7 @@ RecallSuggestionEngine.analyze()  ← v2.9.0 신규
 응답 반환 (fragments + _suggestion)
 ```
 
-### DB 스키마 — v2.9.0 마이그레이션
+### DB 스키마 — 마이그레이션
 
 **migration-034: api_keys.default_mode**
 - `TEXT DEFAULT NULL` 컬럼 추가
@@ -1114,6 +1118,103 @@ RecallSuggestionEngine.analyze()  ← v2.9.0 신규
 - `TEXT DEFAULT 'neutral'` 컬럼 추가
 - CHECK 제약: `affect IN ('neutral', 'frustration', 'confidence', 'surprise', 'doubt', 'satisfaction')`
 - remember() 파라미터 `affect`로 저장, recall() 파라미터 `affect`로 필터링
+
+---
+
+## reflect 처리 흐름
+
+### reflect 처리 흐름
+
+ReflectProcessor.process()는 5개 카테고리(summary/decisions/errors_resolved/new_procedures/open_questions)를 단일 `allFragmentItems[]` 배열로 합쳐 `batchRememberProcessor.process()`에 일괄 위임한다.
+
+각 항목에 `_category` 메타를 부여하고 반환 `results`를 카테고리별로 재집계하여 기존 breakdown shape(`{summary, decisions, errors, procedures, questions}`)을 보존한다. `batchRememberProcessor`가 주입되지 않은 레거시 mock 환경에서는 `store.insert + index.index` 경로로 폴백한다.
+
+관련 코드: `lib/memory/ReflectProcessor.js` line 81~258 (`allFragmentItems` 빌드 → `batchRememberProcessor.process` 위임 → 결과 재집계).
+
+```
+reflect() 호출
+    │
+    ▼
+5개 카테고리 → allFragmentItems[] (각 항목에 _category 메타 부여)
+    │
+    ▼
+batchRememberProcessor.process({ fragments: batchFragments })
+    │
+    ├── Phase A: 검증 (content null/type 누락/Content too short 거부)
+    ├── Phase B: 청크 단위 multi-row INSERT (256KB 또는 500행 분할)
+    └── Phase C: 임베딩 큐 + Redis 인덱스 후처리
+    │
+    ▼
+results 카테고리별 재집계 → breakdown shape 보존
+    │
+    ▼
+autoLinkSessionFragments (배치 처리)
+```
+
+### autoLinkSessionFragments 배치 처리
+
+errors×decisions, procedures×errors 곱집합을 다음 4단계 배치 처리로 실행한다.
+
+1. errors×decisions(`caused_by`), procedures×errors(`resolved_by`) 페어 빌드
+2. 각 페어에 `sortedKey(min, max)` 부여 후 사전식 오름차순 정렬 (데드락 회피)
+3. `wouldCreateCycle` 결과를 `Map` 캐시에 기록하여 동일 페어 DB 왕복 중복 제거
+4. cycle을 통과한 페어 전체를 `store.createLinks()` 단일 트랜잭션 호출
+
+부분 실패 시 전체 롤백 후 단건 `createLink` fallback으로 전환한다. `LinkStore.createLinks`는 `SET LOCAL lock_timeout='5s'`, advisory lock 일괄 획득, multi-row INSERT ON CONFLICT, RETURNING id를 단일 트랜잭션으로 실행한다.
+
+관련 코드: `lib/memory/SessionLinker.js` line 105~177, `lib/memory/LinkStore.js` line 94~195.
+
+### EmbeddingWorker._embedMany 배치화
+
+기존 단건 직렬 임베딩 처리를 `generateBatchEmbeddings` 1회 호출 + `multi-row UPDATE FROM (VALUES ...) v(id, vec)` 1회로 대체한다.
+
+retry 정책:
+1. 1차 batch 시도 → HTTP 400 응답 시 정규식 `/Invalid 'input\[(\d+)\]'/` 파싱으로 문제 행 특정
+2. 특정된 행을 dead-letter 큐(`queue:{queueKey}:dead`)로 이동 후 나머지 재batch (`_embedChunk` 재귀)
+3. 인덱스 미명시 에러(정규식 매칭 실패) → 청크 전체를 `_embedOne` 단건 fallback
+
+청크 분할: 누적 256KB 또는 200건 중 먼저 도달한 기준으로 분할(`_embedMany` 내).
+
+SQL 타입 주의: `fragments.id`는 `frag-{16자 hex}` TEXT 타입이므로 multi-row UPDATE placeholder는 `::text`와 `::vector`를 사용한다. `::uuid` cast 사용 금지 (타입 불일치 오류 발생).
+
+관련 코드: `lib/memory/EmbeddingWorker.js` line 183~293 (`_embedMany`, `_embedChunk`, `_embedOne`).
+
+### MorphemeIndex 비동기 분리 + Consistency Gate
+
+`RememberPostProcessor`는 형태소 등록을 fire-and-forget으로 비동기 처리한다. 등록 완료 시 `fragments.morpheme_indexed = true`로 갱신한다.
+
+`getOrRegisterEmbeddings`는 누락 형태소 전체를 `generateBatchEmbeddings` 1회 + multi-row INSERT(`ON CONFLICT DO NOTHING`) 1회로 처리한다. 청크: 200건 또는 256KB 누적 중 먼저 도달. 배치 실패 시 `_parseBadIndexes` 정규식으로 문제 항목 격리 후 나머지 재시도, 인덱스 미명시 에러는 `_fallbackSingleRegister` 단건 경로.
+
+Consistency Gate: `FragmentReader.searchBySemantic` 파라미터 `morphemeOnly=true` 설정 시 `f.morpheme_indexed = true` 조건을 WHERE절에 추가(`lib/memory/FragmentReader.js` line 402~403). `FragmentSearch._searchL3` morpheme sub-path(`lib/memory/FragmentSearch.js` line 582)가 이 플래그를 전달한다. 형태소 등록 미완료 파편은 키워드 매칭(L2)은 가능하지만 형태소 기반 L3 시맨틱 검색에서는 제외된다.
+
+migration-035(`lib/memory/migration-035-morpheme-indexed.sql`): `fragments.morpheme_indexed BOOLEAN NOT NULL DEFAULT false` 컬럼 추가, 기존 파편 백필, 부분 인덱스(`WHERE morpheme_indexed = false`) 생성.
+
+관련 코드: `lib/memory/MorphemeIndex.js` line 116~266, `lib/memory/RememberPostProcessor.js` line 107~214.
+
+### batchPool / Primary pool 분리
+
+`lib/tools/db.js`에 `getBatchPool()` 함수가 추가됐다. Primary pool과 독립적인 batch 전용 연결 풀로, Primary pool 연결 starvation을 완화한다.
+
+```
+Primary Pool (getPrimaryPool)          Batch Pool (getBatchPool)
+  max = DB_MAX_CONNECTIONS               max = floor(primaryMax * 0.3), 최소 2
+  application_name = 'memento-mcp'       application_name = 'memento-mcp:batch'
+  DB = DATABASE_URL                      DB = BATCH_DATABASE_URL (없으면 동일 DB)
+```
+
+`BATCH_DATABASE_URL` 환경변수를 설정하면 별도 DB 인스턴스로 라우팅하여 I/O 완전 분리가 가능하다. 미설정 시 동일 DB에 별도 풀로 연결된다.
+
+BatchRememberProcessor 측의 `this._getPool()` 분기에서 `getBatchPool()`을 우선 선택하도록 연결하는 작업은 후속 PR에서 수행 예정이다. 현 시점에서 BatchRememberProcessor는 여전히 Primary pool을 사용한다.
+
+관련 코드: `lib/tools/db.js` line 67~121.
+
+### migration-035: fragments.morpheme_indexed
+
+| 컬럼 | 타입 | 기본값 | 설명 |
+|-|-|-|-|
+| `morpheme_indexed` | BOOLEAN | NOT NULL DEFAULT false | 형태소 사전 등록 완료 여부. RememberPostProcessor 완료 후 true로 갱신됨 |
+
+migration SQL: `lib/memory/migration-035-morpheme-indexed.sql`.
 
 ---
 

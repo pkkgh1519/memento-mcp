@@ -44,7 +44,7 @@ CUDA 11이 설치된 시스템에서 `@huggingface/transformers`의 의존성인
 ## PostgreSQL 스키마 적용
 
 ```bash
-# 신규 설치
+# 최초 설치
 psql -U $POSTGRES_USER -d $POSTGRES_DB -f lib/memory/memory-schema.sql
 ```
 
@@ -72,18 +72,19 @@ psql "$DATABASE_URL" -f lib/memory/migration-016-agent-topic-index.sql
 psql "$DATABASE_URL" -f lib/memory/migration-017-episodic.sql
 psql $DATABASE_URL -f lib/memory/migration-021-oauth-clients.sql  # OAuth 클라이언트 등록
 psql $DATABASE_URL -f lib/memory/migration-025-case-id-episode.sql    # fragments narrative reconstruction 컬럼 (case_id, goal, outcome, phase, resolution_status, assertion_status)
-psql $DATABASE_URL -f lib/memory/migration-026-case-events.sql        # case_events + case_event_edges + fragment_evidence 테이블 (Narrative Reconstruction Phase 3)
-psql $DATABASE_URL -f lib/memory/migration-027-v25-reconsolidation-episode-spreading.sql  # fragment_links 재통합 컬럼 + link_reconsolidations + case_events idempotency_key + keywords GIN 인덱스 (v2.5.0)
-psql $DATABASE_URL -f lib/memory/migration-028-v253-improvements.sql                     # 복합 인덱스 추가, used_rrf 단일화, superseded_by 제거 (v2.5.3)
-psql $DATABASE_URL -f lib/memory/migration-029-search-param-thresholds.sql               # SearchParamAdaptor 검색 파라미터 학습 테이블 (v2.5.6)
-psql $DATABASE_URL -f lib/memory/migration-030-search-param-thresholds-key-text.sql      # search_param_thresholds.key_id INTEGER → TEXT (UUID 호환) (v2.6.0)
-psql $DATABASE_URL -f lib/memory/migration-031-content-hash-per-key.sql                  # content_hash 전역 UNIQUE → 테넌트별 partial unique index (v2.7.0)
-psql $DATABASE_URL -f lib/memory/migration-032-fragment-claims.sql                       # fragment_claims 테이블 + tenant 격리 partial unique (v2.8.0 Symbolic Memory Phase 0)
-psql $DATABASE_URL -f lib/memory/migration-033-symbolic-hard-gate.sql                    # api_keys.symbolic_hard_gate 컬럼 (v2.8.0 symbolic hard gate opt-in)
-psql $DATABASE_URL -f lib/memory/migration-034-v2.16.0-bundle.sql                        # api_keys.default_mode + fragments.affect + fragments.idempotency_key (v2.9.0~v2.12.0 단일 번들)
+psql $DATABASE_URL -f lib/memory/migration-026-case-events.sql        # case_events + case_event_edges + fragment_evidence 테이블 (Narrative Reconstruction)
+psql $DATABASE_URL -f lib/memory/migration-027-v25-reconsolidation-episode-spreading.sql  # fragment_links 재통합 컬럼 + link_reconsolidations + case_events idempotency_key + keywords GIN 인덱스
+psql $DATABASE_URL -f lib/memory/migration-028-v253-improvements.sql                     # 복합 인덱스 추가, used_rrf 단일화, superseded_by 제거
+psql $DATABASE_URL -f lib/memory/migration-029-search-param-thresholds.sql               # SearchParamAdaptor 검색 파라미터 학습 테이블
+psql $DATABASE_URL -f lib/memory/migration-030-search-param-thresholds-key-text.sql      # search_param_thresholds.key_id INTEGER → TEXT (UUID 호환)
+psql $DATABASE_URL -f lib/memory/migration-031-content-hash-per-key.sql                  # content_hash 전역 UNIQUE → 테넌트별 partial unique index
+psql $DATABASE_URL -f lib/memory/migration-032-fragment-claims.sql                       # fragment_claims 테이블 + tenant 격리 partial unique (Symbolic Memory)
+psql $DATABASE_URL -f lib/memory/migration-033-symbolic-hard-gate.sql                    # api_keys.symbolic_hard_gate 컬럼 (symbolic hard gate opt-in)
+psql $DATABASE_URL -f lib/memory/migration-034-v2.16.0-bundle.sql                        # api_keys.default_mode + fragments.affect + fragments.idempotency_key (단일 번들)
+psql $DATABASE_URL -f lib/memory/migration-035-morpheme-indexed.sql                      # fragments.morpheme_indexed BOOLEAN 추가 + 기존 행 백필 + sparse partial index
 ```
 
-> **migration-007 재실행**: `EMBEDDING_DIMENSIONS`를 변경하거나 임베딩 제공자를 전환한 경우, `post-migrate-flexible-embedding-dims.js`를 재실행하면 `fragments` 테이블과 `morpheme_dict` 테이블의 벡터 차원이 동시에 갱신된다. (구 경로 `scripts/migration-007-flexible-embedding-dims.js` 심볼릭 링크는 v3.1.0에서 제거됐다)
+> **migration-007 재실행**: `EMBEDDING_DIMENSIONS`를 변경하거나 임베딩 제공자를 전환한 경우, `post-migrate-flexible-embedding-dims.js`를 재실행하면 `fragments` 테이블과 `morpheme_dict` 테이블의 벡터 차원이 동시에 갱신된다. 구 경로 `scripts/migration-007-flexible-embedding-dims.js` 심볼릭 링크는 제거됐으므로 `scripts/post-migrate-flexible-embedding-dims.js`를 직접 사용한다.
 
 > **migration-034-v2.16.0 CONCURRENTLY 옵션**: migration-034-v2.16.0-bundle은 트랜잭션 내에서 실행되므로 `CREATE UNIQUE INDEX`를 사용한다. 수백만 건 이상의 대규모 운영 테이블에서 잠금 최소화가 필요한 경우, `npm run migrate` 실행 전에 아래 두 문을 수동으로 실행하면 IF NOT EXISTS 가드에 의해 자동 실행 시 안전하게 SKIP된다.
 >
@@ -97,6 +98,8 @@ psql $DATABASE_URL -f lib/memory/migration-034-v2.16.0-bundle.sql               
 >   WHERE idempotency_key IS NOT NULL AND key_id IS NULL;
 > ```
 
+> **migration-035 morpheme_indexed**: `fragments.morpheme_indexed BOOLEAN NOT NULL DEFAULT false` 컬럼을 추가한다. 마이그레이션 실행 시 기존 `keywords IS NOT NULL` 파편은 `true`로 자동 백필된다. 부분 인덱스 `idx_fragments_morpheme_indexed`(`WHERE morpheme_indexed = false`)로 재인덱싱 대상 파편을 sparse하게 추적한다. `DEFAULT false`이므로 롤백 없이 hot deploy가 안전하다. Consistency Gate는 MorphemeIndex 등록이 완료된 파편(`morpheme_indexed = true`)만 morpheme 검색 대상으로 제한한다.
+
 > **rollback 파일 네이밍**: rollback SQL 파일은 `rollback-migration-NNN-*.sql` 형식으로 이름을 지정해야 한다. `migrate.js`의 auto-pickup glob은 `migration-*.sql` 패턴만 인식하므로, `rollback-` 접두어를 붙이면 자동 실행에서 제외된다.
 
 v1.8.0부터 자동 마이그레이션을 지원한다. 위 수동 실행 대신:
@@ -105,7 +108,7 @@ v1.8.0부터 자동 마이그레이션을 지원한다. 위 수동 실행 대신
 DATABASE_URL=postgresql://user:pass@host:port/dbname npm run migrate
 ```
 
-### v2.9.x → v2.12.0 업그레이드 경로
+### migration-034 번들 이전 버전에서 업그레이드
 
 ```bash
 # 1. 의존성 업데이트
@@ -119,10 +122,26 @@ npm run migrate
 #    EMBEDDING_DIMENSIONS=N DATABASE_URL=$DATABASE_URL node scripts/post-migrate-flexible-embedding-dims.js
 #    DATABASE_URL=$DATABASE_URL node scripts/backfill-embeddings.js
 
-# 4. .env 신규 항목 확인
+# 4. .env 항목 확인
 #    MEMENTO_CLI_REMOTE, MEMENTO_CLI_KEY 추가 여부 검토 (원격 CLI 경유 사용 시)
 
 # 5. 서버 재시작
+node server.js
+```
+
+### migration-035 이전 버전에서 업그레이드
+
+```bash
+# 1. 의존성 업데이트
+npm install
+
+# 2. 마이그레이션 실행 (migration-035-morpheme-indexed 포함)
+npm run migrate
+
+# 3. .env 항목 확인 (선택)
+#    BATCH_DATABASE_URL: batchPool 전용 DB URL. 미설정 시 DATABASE_URL 공유.
+
+# 4. 서버 재시작
 node server.js
 ```
 
@@ -142,7 +161,7 @@ migration-034-v2.16.0-bundle 인덱스 적용 확인:
 
 > **migration-009, 010**: co_retrieved 링크 타입이 없으면 Hebbian 링킹이 DB 제약 에러로 조용히 실패하고, ema_activation 컬럼이 없으면 incrementAccess SQL 오류가 발생한다. 반드시 실행 후 서버를 시작해야 한다.
 
-> **v2.7.0**: `MEMENTO_ACCESS_KEY` 환경 변수가 필수다. 설정하지 않으면 서버가 시작 시 경고를 출력하며 인증 없이 동작한다. 개발/테스트 환경에서 의도적으로 인증을 비활성화하려면 `.env`에 `MEMENTO_AUTH_DISABLED=true`를 추가한다.
+> **MEMENTO_ACCESS_KEY**: 설정하지 않으면 서버가 시작 시 경고를 출력하며 인증 없이 동작한다. 개발/테스트 환경에서 의도적으로 인증을 비활성화하려면 `.env`에 `MEMENTO_AUTH_DISABLED=true`를 추가한다.
 
 ```bash
 # 기본 임베딩(1536차원) 사용 시: migration-007 불필요
@@ -183,8 +202,7 @@ COMPRESS_AGE_DAYS       - 압축 대상 비활성 일수 (기본: 30)
 COMPRESS_MIN_GROUP      - 압축 그룹 최소 크기 (기본: 3)
 CONSOLIDATE_INTERVAL_MS - consolidate 주기 (기본: 3600000 = 1시간)
 ALLOWED_ORIGINS         - CORS 허용 Origin 목록 (쉼표 구분)
-RERANKER_ENABLED        - cross-encoder reranking 활성화 (기본: false)
-RERANKER_MODEL          - in-process 모델 선택: minilm (기본, 영어 전용) 또는 bge-m3 (다국어, 비영어권 권장)
+RERANKER_MODEL          - in-process ONNX 모델 선택: minilm (기본, 영어 전용) 또는 bge-m3 (다국어, 비영어권 권장). ONNX 모델 preload 성공 시 자동 활성화
 LLM_PRIMARY             - 주 LLM provider (기본: gemini-cli). gemini-cli, codex, copilot, anthropic 등
 LLM_FALLBACKS           - JSON 배열. 각 원소: {"provider":"anthropic","apiKey":"...","model":"claude-opus-4-6"}
 ```

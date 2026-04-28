@@ -25,7 +25,27 @@ import {
   _buildGeminiPrompt,
   MIN_SESSION_DURATION_MS,
   autoReflect,
+  GEMINI_TIMEOUT_MS,
 } from "../../lib/memory/AutoReflect.js";
+
+/* ── Phase 6 회귀: Gemini timeout 30s 검증 ── */
+
+describe("Phase 6 — GEMINI_TIMEOUT_MS 회귀 가드", () => {
+
+  it("GEMINI_TIMEOUT_MS가 export된 숫자다", () => {
+    assert.strictEqual(typeof GEMINI_TIMEOUT_MS, "number");
+  });
+
+  it("GEMINI_TIMEOUT_MS가 30_000(30s)이다 (외부 게이트웨이 60s 컷오프 대비 30s 마진)", () => {
+    assert.strictEqual(GEMINI_TIMEOUT_MS, 30_000,
+      "게이트웨이 컷오프 회피 마진 확보를 위해 30s를 초과해서는 안 된다");
+  });
+
+  it("GEMINI_TIMEOUT_MS가 40_000이 아니다 (이전 값 회귀 방지)", () => {
+    assert.notStrictEqual(GEMINI_TIMEOUT_MS, 40_000);
+  });
+
+});
 
 /* ── autoReflect 인터페이스 ── */
 

@@ -94,7 +94,7 @@ rate(memento_llm_token_usage_total{direction="input"}[1h])
 # LLM_FALLBACKS JSON에서 해당 provider 원소 제거 후 서버 재시작
 ```
 
-### 특정 모델 deprecation
+### 특정 모델 교체
 
 ```bash
 # LLM_FALLBACKS JSON의 model 필드를 새 모델명으로 변경 후 서버 재시작
@@ -172,7 +172,7 @@ POST /v1/chat/completions 엔드포인트를 그대로 사용하며 baseUrl과 e
 
 OpenAICompatibleProvider를 상속하면 callText 구현이 자동으로 제공된다. 서브클래스는 생성자에서 name, baseUrl, apiKey, model, extraHeaders를 설정하는 것 외에 추가 코드가 거의 불필요하다.
 
-주의: OpenAICompatibleProvider 상속 방식은 v2.10.0에서 composition 전환 예정이다. v2.9.x 동안은 기존 상속 구조 유지.
+현재 OpenAICompatibleProvider는 상속 구조이다.
 
 ### 현재 provider 상속 분류
 

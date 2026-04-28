@@ -156,24 +156,25 @@ Claude.ai Web / ChatGPT 연동은 OAuth를 사용한다. 발급한 API 키(`mmcp
 | **에피소드 연속성** | `reflect` 후 생성된 episode 파편 간 `preceded_by` 엣지를 자동 생성하여 경험 흐름을 그래프로 보존 (EpisodeContinuityService). |
 | 관리 콘솔 | 기억 탐색, 지식 그래프, 통계 대시보드, API 키 그룹/상태 필터, daily-limit 인라인 편집 |
 | OAuth 연동 | RFC 7591 Dynamic Client Registration, Claude.ai / ChatGPT Web 통합 지원 |
-| **Workspace 격리** | 같은 키 내에서도 프로젝트·직종·클라이언트 단위로 기억을 분리. `api_keys.default_workspace`로 자동 태깅, 검색 시 자동 필터. |
+| Workspace 격리 | 같은 키 내에서도 프로젝트·직종·클라이언트 단위로 기억을 분리. `api_keys.default_workspace`로 자동 태깅, 검색 시 자동 필터. |
+| 배치 처리 | `batch_remember`는 multi-row 단일 INSERT(256KB 또는 500행 chunk). `reflect`는 summary/decisions/errors_resolved/new_procedures/open_questions 5카테고리를 단일 배치 호출로 위임. EmbeddingWorker는 큐 묶음을 한 번의 generateBatchEmbeddings + multi-row UPDATE로 처리. |
+| Consistency Gate | `fragments.morpheme_indexed` 컬럼으로 형태소 인덱스 완료 여부 추적. 미완료 파편은 L3 형태소 검색 경로에서 자동 제외. |
+| Mode preset | `recall-only` / `write-only` / `onboarding` / `audit` JSON preset. `X-Memento-Mode` 헤더 또는 `api_keys.default_mode`로 도구 노출 범위 제한. |
+| Affective tagging | `fragments.affect` 컬럼(neutral / frustration / confidence / surprise / doubt / satisfaction). remember / recall 시 감정 레이블로 필터링. |
+| 로컬 임베딩 | `EMBEDDING_PROVIDER=transformers`로 외부 API 없이 `@huggingface/transformers` 파이프라인 기반 임베딩(`Xenova/multilingual-e5-small`, 384d 기본). |
 
-### v3.0.0 신규 기능 — CLI/API Enhancement Phase 2 (v2.12.0 통합)
+전체 MCP 도구 목록은 [SKILL.md](SKILL.md) 참조.
 
-원격 CLI, RateLimit 헤더, dryRun, _meta 래퍼, sparse fields, idempotency 6가지 기능을 추가했다.
+## CLI
 
-- 원격 MCP 경유 CLI: `--remote URL --key KEY` 전역 플래그로 로컬 서버 없이 원격 Memento 서버를 직접 조작한다. `MEMENTO_CLI_REMOTE` / `MEMENTO_CLI_KEY` 환경변수로도 지정 가능.
-- X-RateLimit 헤더: 모든 API 응답에 `X-RateLimit-Limit` / `X-RateLimit-Remaining` / `X-RateLimit-Resource` 헤더를 포함한다. master key 또는 limit=null 설정 시 헤더를 생략한다. 10초 TTL 모듈 캐시로 DB 조회를 최소화한다.
-- dryRun 파라미터: remember / link / forget / amend 4개 MCP 도구에 `dryRun: true` 파라미터를 추가했다. 실제 DB 변경 없이 예상 결과만 반환하며 부작용을 완전히 건너뛴다. 기본값 false.
-
-CLI 사용 예시:
+원격 MCP 서버를 로컬 노드 없이 직접 조작할 수 있다. `--remote URL --key KEY` 전역 플래그 또는 `MEMENTO_CLI_REMOTE` / `MEMENTO_CLI_KEY` 환경변수로 지정한다.
 
 ```bash
 # 원격 서버에서 recall (환경변수 방식)
-MEMENTO_CLI_REMOTE=https://memento.anchormind.net/mcp MEMENTO_CLI_KEY=mmcp_xxx memento-mcp recall "query"
+MEMENTO_CLI_REMOTE=https://example.com/mcp MEMENTO_CLI_KEY=mmcp_xxx memento-mcp recall "query"
 
 # 원격 서버에서 recall (플래그 방식)
-memento-mcp recall "query" --remote https://memento.anchormind.net/mcp --key mmcp_xxx
+memento-mcp recall "query" --remote https://example.com/mcp --key mmcp_xxx
 
 # 표 형식 출력, 결과 5건
 memento-mcp recall "query" --format table --limit 5
@@ -182,24 +183,11 @@ memento-mcp recall "query" --format table --limit 5
 memento-mcp remember "내용" --topic 프로젝트명 --idempotency-key k1
 ```
 
-### v3.0.0 신규 기능 — CLI/API Enhancement Phase 1 (v2.11.0 통합)
+`--format table|json|csv` 출력 형식 선택, 11개 서브명령에 `--help`/`-h` 지원. 자세한 플래그는 [docs/cli.md](docs/cli.md).
 
-H 그룹: _meta 래퍼, sparse fields, CLI 개선, idempotency.
+## API 응답 메타
 
-- _meta 래퍼: recall / context 응답에 `_meta: { searchEventId, hints, suggestion }` 필드를 추가했다. 기존 top-level `_searchEventId` / `_memento_hint` / `_suggestion` 필드는 v3.1.0 제거 예정이므로 `_meta.*` 경로를 사용할 것.
-- sparse fields: recall 호출 시 `fields` 배열로 반환 필드를 제한할 수 있다. 화이트리스트 17개: id / content / type / topic / keywords / importance / created_at / access_count / confidence / linked / explanations / workspace / context_summary / case_id / valid_to / affect / ema_activation.
-- CLI `--format`: `--format table|json|csv` 플래그로 출력 형식을 선택한다. TTY 환경에서는 기본 table, 파이프 환경에서는 자동으로 json. `--json`은 `--format json` 별칭.
-- CLI `--help`: 11개 서브명령 각각에 `--help` / `-h` 플래그 지원.
-- idempotencyKey: remember / batchRemember에 `idempotencyKey` 파라미터 추가. 같은 key_id 범위 내 중복 저장을 방지하며 최대 128자. migration-034-v2.16.0-bundle으로 `fragments.idempotency_key` 컬럼 추가.
-
-### v3.0.0 신규 기능 — Admin Metrics Dashboard (v2.16.0 통합)
-
-- Admin Console 메트릭 메뉴: Prometheus 8 카드(Active Sessions / Auth Denied / RBAC Denied / Tenant Blocked / RPC p50/p99 / Tool Errors / Symbolic Gate Blocked / OAuth Tokens) + 도구별 호출 통계 테이블 + 에러 타입별 분포 테이블. 좌측 사이드바 메뉴 7개 → 8개.
-- `/v1/internal/model/nothing/metrics-summary` 엔드포인트(master/admin 전용): prom-client Registry 직접 산출, 응답 캐시 TTL 10초, `?windowSec=N` 파라미터 지원.
-- Phase 2: timeseries ring buffer + SVG sparkline. 외부 차트 라이브러리 의존 없이 브라우저 네이티브 ESM으로 렌더링.
-- test cleanup hang 근본 해결: node:test runner "Promise resolution pending" 14초 잔여 제거(SSE heartbeat `.unref()`, lifecycle 회귀 가드).
-
-_meta 래퍼 구조 예시:
+`recall` / `context` 응답은 `_meta: { searchEventId, hints, suggestion }` 필드를 포함한다.
 
 ```json
 {
@@ -212,51 +200,34 @@ _meta 래퍼 구조 예시:
 }
 ```
 
-Deprecation 공지: top-level `_searchEventId` / `_memento_hint` / `_suggestion` 필드는 v3.0.0에서 `_meta.*`와 mirror 제공되며, v3.1.0에서 제거된다. 호출부는 `_meta.searchEventId` / `_meta.hints` / `_meta.suggestion`으로 전환할 것.
+`remember` / `link` / `forget` / `amend`는 `dryRun: true` 파라미터로 부작용 없이 예상 결과만 반환한다. 모든 응답에 `X-RateLimit-Limit` / `X-RateLimit-Remaining` / `X-RateLimit-Resource` 헤더가 포함되며 master key 또는 limit=null 설정 시 헤더를 생략한다. `recall`은 `fields` 배열로 반환 필드를 17개 화이트리스트 범위로 제한할 수 있다. `remember` / `batchRemember`는 `idempotencyKey` 파라미터로 같은 key_id 범위 내 중복 저장을 방지한다(최대 128자).
 
-### v3.0.0 신규 기능 — MemoryManager 분해 (v2.10.0 통합)
+## 보안
 
-Phase 5-B 내부 구조 분해. 사용자 API에는 변경 없다.
+- RBAC default-deny: `TOOL_PERMISSIONS` 맵에 없는 도구명은 권한과 무관하게 즉시 거부.
+- 테넌트 격리: forget / amend / link / fragment_history는 SQL 레벨 `key_id` 조건으로 타 테넌트 파편 접근 불가. "없음"과 "권한 없음"을 동일 메시지로 처리하여 존재 여부 노출 방지.
+- injectSessionContext: 클라이언트가 전송한 `_keyId` / `_permissions` 등 내부 필드를 서버 인증 결과로 재주입하여 세션 컨텍스트 위조 차단.
+- Admin rate limit: `/auth`, `/keys` POST, `/import` POST에 IP 기반 rate limit.
+- OpenAPI: `GET /openapi.json` 엔드포인트(`ENABLE_OPENAPI=true`). master key는 전체 경로, API key는 permissions 필터 스펙 반환.
 
-- MemoryManager 축소: 1252줄 → 259줄 facade로 축소했다. 비즈니스 로직은 `lib/memory/processors/` 4개 클래스로 이동했다.
-  - MemoryRememberer: remember / batchRemember
-  - MemoryRecaller: recall / context
-  - MemoryReflector: reflect
-  - MemoryLinker: link / graph_explore
-- 공유 프로퍼티 동기화: facade ↔ 프로세서 간 setter를 `_installSharedSync` 패턴으로 동기화한다.
+## Symbolic Verification Layer
 
-### v3.0.0 신규 기능 — Mode preset / Affect / Local Embedding (v2.9.0 통합)
+선택적 설명 가능성, advisory 링크 무결성, 극성 충돌 탐지, 정책 규칙 soft gating. 9 core 모듈 + 5 규칙 파일. 모든 플래그 기본 비활성.
 
-- **Mode preset**: recall-only / write-only / onboarding / audit 4개 JSON preset. `X-Memento-Mode` 헤더 또는 `api_keys.default_mode` DB 컬럼으로 도구 노출 범위를 제한한다. 읽기 전용 에이전트, 감사 전용 세션 등 역할 기반 접근을 코드 변경 없이 구성할 수 있다.
-- **RecallSuggestionEngine**: recall 응답에 `_suggestion` 메타 필드를 비침습적으로 첨부. 반복 질의, 빈 결과, 과도한 limit 등 4개 패턴을 자동 감지하여 개선 힌트를 제공한다. 클라이언트가 무시해도 기존 동작 불변.
-- **Affective tagging**: `fragments.affect` 컬럼(neutral / frustration / confidence / surprise / doubt / satisfaction). remember / recall 시 감정 레이블로 필터링 가능. 반복 에러 패턴이나 확신도 높은 결정을 구분하는 데 활용된다.
-- **CLI LLM provider 체인**: Gemini CLI, Codex CLI, GitHub Copilot CLI를 `LLM_PRIMARY` / `LLM_FALLBACKS`에 지정 가능. 외부 API 비용 없이 로컬 CLI 바이너리로 형태소 분석·자동 reflect·모순 에스컬레이션을 처리한다.
-- **로컬 transformers.js 임베딩**: `EMBEDDING_PROVIDER=transformers`로 OpenAI API 없이 `@huggingface/transformers` 파이프라인 기반 임베딩. 기본 `Xenova/multilingual-e5-small` (384d). API 키 없는 로컬 전용 배포에 적합하다.
-- **토큰 기반 세션 재사용**: claude.ai 커넥터가 Mcp-Session-Id를 유실한 뒤 매 initialize마다 새 세션을 만들던 문제 해결. 동일 액세스 토큰에 기존 세션 ID를 재바인딩하여 기억 파편이 유실되지 않는다.
+## Smart Recall
 
-### 보안 하드닝 (v2.7.0)
+- ProactiveRecall: `remember()` 시 키워드 오버랩 기반 유사 파편 자동 링크.
+- CaseRewardBackprop: case verification 이벤트 시 증거 파편 importance 자동 역전파.
+- SearchParamAdaptor: 사용 패턴 기반 검색 임계값 자동 최적화.
+- CBR(Case-Based Reasoning): `recall(caseMode=true)` 로 유사 사례의 goal → events → outcome 흐름을 검색하여 과거 해결 패턴 재활용.
+- depth 필터: Planner/Executor 역할별 검색 깊이 제어(`"high-level"` / `"detail"` / `"tool-level"`).
+- recall 응답 `key_id`: 반환 파편에 소유 테넌트 식별자 포함.
+- Reconsolidation: `tool_feedback` 기반 `fragment_links` weight/confidence 실시간 갱신(`ENABLE_RECONSOLIDATION=true`).
+- Spreading Activation: `recall(contextText=...)` 전달 시 대화 맥락 기반 관련 파편 ema_activation 선제 활성화(`ENABLE_SPREADING_ACTIVATION=true`).
 
-- **RBAC default-deny**: `TOOL_PERMISSIONS` 맵에 없는 도구명은 권한과 무관하게 즉시 거부된다.
-- **테넌트 격리 강화**: forget/amend/link/fragment_history는 SQL 레벨 `key_id` 조건으로 타 테넌트 파편에 접근 불가. "없음"과 "권한 없음"을 동일 메시지로 처리하여 존재 여부 노출 방지.
-- **injectSessionContext**: 클라이언트가 전송한 `_keyId`/`_permissions` 등 내부 필드를 삭제하고 서버 인증 결과로 재주입. 세션 컨텍스트 위조 불가.
-- **Admin rate limit**: `/auth`, `/keys` POST, `/import` POST에 IP 기반 rate limit 적용.
-- **OpenAPI**: `GET /openapi.json` 엔드포인트 추가 (`ENABLE_OPENAPI=true`). master key는 전체 경로, API key는 permissions 필터 스펙 반환.
+`fragments.id`는 `frag-{16자 hex}` text 형식이다. UUID가 아니므로 외부에서 ID를 생성하거나 파싱할 때 주의한다.
 
-### Symbolic Verification Layer (v2.8.0)
-
-- **Symbolic Verification Layer (v2.8.0)**: 선택적 설명 가능성, advisory 링크 무결성, 극성 충돌 탐지, 정책 규칙 soft gating. 9 core 모듈 + 5 규칙 파일. 모든 플래그 기본 비활성, v2.7.0 완전 호환.
-
-### Smart Recall (v2.7.0)
-- **ProactiveRecall**: remember() 시 키워드 오버랩 기반 유사 파편 자동 링크
-- **CaseRewardBackprop**: case verification 이벤트 시 증거 파편 importance 자동 역전파
-- **SearchParamAdaptor**: 사용 패턴 기반 검색 임계값 자동 최적화
-- **CBR (Case-Based Reasoning)**: `recall(caseMode=true)` 로 유사 사례의 goal→events→outcome 흐름을 검색하여 과거 해결 패턴 재활용
-- **depth 필터**: Planner/Executor 역할별 검색 깊이 제어 (`"high-level"` | `"detail"` | `"tool-level"`)
-- **recall 응답 key_id 포함**: 반환 파편마다 `key_id` 필드가 포함되어 소유 테넌트 식별 가능
-- **Reconsolidation**: `tool_feedback` 피드백 기반 fragment_links weight/confidence 실시간 강화 또는 약화 (`ENABLE_RECONSOLIDATION=true`)
-- **Spreading Activation**: `recall(contextText=...)` 전달 시 대화 맥락 기반 관련 파편 ema_activation 선제 활성화 (`ENABLE_SPREADING_ACTIVATION=true`)
-
-전체 MCP 도구 목록은 [SKILL.md](SKILL.md) 참조.
+`/metrics` 엔드포인트가 Prometheus 호환 형식으로 메트릭을 노출한다. 수집·시각화는 사용자가 자유롭게 구성한다.
 
 ## 기억 vs 규칙
 
@@ -305,7 +276,7 @@ Memento는 사실 기억(fact cache)에 최적화되어 있다. 전후관계가 
 | [Benchmark](docs/benchmark.md) | LongMemEval-S 벤치마크 상세 분석 |
 | [SKILL.md](SKILL.md) | MCP 도구 전체 레퍼런스 |
 | [INSTALL.md](docs/INSTALL.md) | 마이그레이션, 훅 설정, 상세 설치 |
-| [CHANGELOG](CHANGELOG.md) | 버전별 변경사항, v3.0.0 umbrella 릴리즈 노트 및 Pre-3.0.0 incremental build 히스토리 포함 |
+| [CHANGELOG](CHANGELOG.md) | 버전별 변경사항 |
 
 ## 운영
 

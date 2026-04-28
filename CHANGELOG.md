@@ -1,5 +1,35 @@
 # Changelog
 
+## [3.2.0] - 2026-04-29
+
+기존 API·DB 스키마 호환. Breaking change 없음.
+
+### Added
+
+- `BatchRememberProcessor`: multi-row INSERT (24컬럼 × N행 placeholder, `RETURNING id`, `ON CONFLICT` 유지, 누적 256KB 또는 500행 chunk).
+- `ReflectProcessor`: 5카테고리(summary / decisions / errors_resolved / new_procedures / open_questions)를 `BatchRememberProcessor.process`에 단일 위임. 사전 validate 강화.
+- `EmbeddingWorker._embedMany`: `generateBatchEmbeddings` 1회 + multi-row UPDATE 1회. row 단위 dead-letter, 단건 fallback.
+- `MorphemeIndex.getOrRegisterEmbeddings`: batch 등록 (`generateBatchEmbeddings` 1회 + multi-row INSERT).
+- `RememberPostProcessor`: morpheme 등록을 fire-and-forget으로 분리.
+- `fragments.morpheme_indexed BOOLEAN` 컬럼 (migration-035, default NULL). 인덱스 미완료 파편을 L3 형태소 검색에서 자동 제외.
+- `drainMorpheme` graceful shutdown 훅.
+- `SessionLinker.autoLinkSessionFragments`: sortedKey 사전식 정렬 + `wouldCreateCycle` 캐시.
+- `LinkStore.createLinks`: advisory lock + multi-row INSERT 단일 트랜잭션. 단건 fallback 유지.
+- `FragmentStore.createLinks`: N개 링크 생성 통합.
+- `db.js` `getBatchPool()`: `max = primaryMax × 0.3`, `application_name = 'memento-mcp:batch'`.
+- `BATCH_DATABASE_URL` 환경변수: 배치 전용 DB 엔드포인트 분리 옵션.
+- `GEMINI_TIMEOUT_MS` 환경변수: AutoReflect LLM timeout 오버라이드 (기본 30s).
+- batchPool Prometheus Gauge 3개: `memento_batchpool_active`, `memento_batchpool_idle`, `memento_batchpool_waiting`.
+
+### Migration
+
+1. `npm run migrate` — migration-035 자동 적용 (ADD COLUMN, hot deploy 안전).
+2. `npm install` — dependency 변화 없음.
+3. 선택: `BATCH_DATABASE_URL`, `GEMINI_TIMEOUT_MS` 환경변수.
+4. 서비스 재시작.
+
+---
+
 ## [3.1.1] - 2026-04-24
 
 LLM Provider 체인 동시성 제어를 추가해 Ollama Cloud, fatherless 프록시 등에서 동시 요청 버스트로 발생하던 HTTP 429 연쇄 실패를 차단한다. 실측상 ollama.com `gemma4:31b-cloud`는 20-24 동시 요청을 넘기면 429를 반환하고, fatherless `google/gemma-4-31B-it`는 동시 4까지만 허용한다. 33.3GB 메모리 피크 사건의 주요 원인이던 LLM 체인 폭주 루프를 완화한다.

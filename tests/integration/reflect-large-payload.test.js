@@ -87,6 +87,20 @@ describe("R12 reflect 큰 페이로드 TDZ 회귀 가드", () => {
     };
     mm.caseEventStore    = { append: async () => {}, recordEvent: async () => {} };
 
+    /**
+     * Phase 1 변경: ReflectProcessor가 batchRememberProcessor를 통해 INSERT하므로
+     * 실제 DB pool 없이 동작하도록 batchRememberProcessor를 stub으로 교체한다.
+     * stub은 입력 fragments 수만큼 성공 결과를 반환한다.
+     */
+    let batchCallCount = 0;
+    mm.reflectProcessor.batchRememberProcessor = {
+      process: async ({ fragments: frags }) => {
+        batchCallCount++;
+        const results = frags.map((_, i) => ({ index: i, id: `stub-batch-${batchCallCount}-${i}`, success: true }));
+        return { results, inserted: frags.length, skipped: 0 };
+      }
+    };
+
     const summary = Array.from({ length: 10 }, (_, i) => `원자 사실 ${i + 1}. 이 문장은 reflect 큰 페이로드 재현 시나리오의 구성원이다.`);
     const narrativeSummary = "이 세션은 reflect 큰 페이로드 재현을 위한 통합 테스트 흐름이다. ".repeat(12).slice(0, 600);
 
@@ -121,6 +135,6 @@ describe("R12 reflect 큰 페이로드 TDZ 회귀 가드", () => {
      * 수 있으므로 최소 1회만 요구한다. 위 try/catch 블록이 ReferenceError를 명시
      * 차단하므로 이 지점에 도달했다는 사실 자체가 회귀 가드를 만족한다.
      */
-    assert.ok(insertedCount >= 1, `insert가 최소 1회 호출되어야 한다 — 실제 ${insertedCount}`);
+    assert.ok(result.fragments.length >= 1, `fragment가 최소 1건 생성되어야 한다 — 실제 ${result.fragments.length}`);
   });
 });

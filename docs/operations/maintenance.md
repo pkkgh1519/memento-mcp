@@ -2,20 +2,20 @@
 
 작성자: 최진호
 작성일: 2026-04-19
-수정일: 2026-04-20 (v2.12.0 migration-034-v2.16.0-bundle 체크리스트, X-RateLimit 모니터링, scripts 테이블 추가, v2.16.0 메트릭 모니터링 섹션 추가)
+수정일: 2026-04-20
 
 운영 중 필요에 따라 실행하는 유지보수 스크립트 목록이다. 각 스크립트의 목적, 선행 조건, 실행 명령, 권장 빈도를 기술한다.
 
 ---
 
-## 메트릭 모니터링 (v2.16.0)
+## 메트릭 모니터링
 
 서버 건전성 지표를 확인하는 두 가지 경로다. 목적에 따라 선택한다.
 
 | 항목 | Admin /metrics-summary | Grafana |
 |-|-|-|
 | 목적 | 즉각 진단 (at-a-glance) | 심층 분석, 시계열 추이 |
-| 접근 방법 | Admin UI 메트릭 메뉴 또는 REST API | https://grafana.nerdvana.kr |
+| 접근 방법 | Admin UI 메트릭 메뉴 또는 REST API | 운영자가 구성한 Grafana 인스턴스 |
 | 데이터 소스 | prom-client in-memory Registry | Prometheus scrape (15s 간격) |
 | 응답 캐시 | 10초 | Prometheus 보관 주기 |
 | 폴링 주기 | Admin UI 자동 30초 | 대시보드 설정에 따름 |
@@ -60,19 +60,13 @@ rate 값(authDeniedRate5m, toolErrorRate5m 등)은 서버 메모리의 직전 sn
 
 ### Grafana 경로
 
-설정 파일 위치:
-
-- Prometheus scrape 대상: `/home/nirna/job/mcp/docs-mcp/monitoring/prometheus.yml`
-- 알림 규칙: `/home/nirna/job/mcp/docs-mcp/monitoring/alerts.yml`
-- 대시보드 JSON: `/home/nirna/job/mcp/docs-mcp/monitoring/grafana/dashboards/json/`
-
 memento-mcp 서버의 `/metrics` 엔드포인트를 scrape한다 (인증 필요, scrape_interval 15초).
 
-Prometheus `/metrics` 원본 수집 설정은 nerdvana-grafana가 담당하며 v2.16.0 변경 없음.
+Prometheus `/metrics` 엔드포인트가 메트릭을 노출한다. 수집 도구는 운영자가 자유롭게 구성한다.
 
 ---
 
-## migration-034-v2.16.0-bundle 적용 체크리스트 (v2.12.0)
+## migration-034-v2.16.0-bundle 적용 체크리스트
 
 migration-034-v2.16.0-bundle은 `fragments.idempotency_key` 컬럼과 테넌트별 partial unique index 2개를 추가한다.
 
@@ -115,7 +109,7 @@ CONCURRENTLY 실행은 트랜잭션 외부에서 이루어지므로 반드시 BE
 
 ## X-RateLimit-* 모니터링
 
-v2.12.0(M3)부터 HTTP 응답에 `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` 헤더가 포함된다.
+HTTP 응답에 `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` 헤더가 포함된다.
 
 ### 구현 특성
 
@@ -148,16 +142,16 @@ Grafana 알림 권장 임계값: `memento_quota_used_total / memento_quota_limit
 
 | 스크립트 | 목적 | 호출 조건 | 빈도 |
 |-|-|-|-|
-| `scripts/migrate.js` | DB 마이그레이션 자동 실행 | 서버 업그레이드, 신규 설치 | 버전 업그레이드 시 1회 |
+| `scripts/migrate.js` | DB 마이그레이션 자동 실행 | 서버 업그레이드, 초기 설치 | 버전 업그레이드 시 1회 |
 | `scripts/backfill-embeddings.js` | embedding IS NULL 파편에 임베딩 일괄 생성 | EMBEDDING_PROVIDER 변경 후, 임베딩 API 장애 복구 후 | 조건부 1회 |
 | `scripts/check-embedding-consistency.js` | 설정 차원과 DB 실제 벡터 차원 일치 검증 | 서버 기동 시 자동 실행 (server.js 내부 호출) | 기동마다 자동 |
 | `scripts/normalize-vectors.js` | 기존 임베딩 벡터 L2 정규화 | 임베딩 제공자 전환 직후 1회 | 조건부 1회 |
 | `scripts/cleanup-noise.js` | 초단문·빈 세션 요약·NLI 재귀 쓰레기 파편 탐지·삭제 | recall 품질 저하 또는 context 토큰 예산 오염 시 | 조건부, 필요 시 월 1회 |
 | `scripts/post-migrate-flexible-embedding-dims.js` | fragments + morpheme_dict 임베딩 컬럼 차원 동시 조정 | EMBEDDING_DIMENSIONS 변경 또는 provider 전환 시 | 조건부 1회 |
-| `scripts/backfill-claims.js` | v2.7.0 이전 코퍼스에 ClaimExtractor 소급 실행 | Phase 1 Shadow(MEMENTO_SYMBOLIC_SHADOW=true) 활성화 전 | 일회성 |
+| `scripts/backfill-claims.js` | 기존 코퍼스에 ClaimExtractor 소급 실행 | Shadow mode(MEMENTO_SYMBOLIC_SHADOW=true) 활성화 전 | 일회성 |
 | `scripts/benchmark-hot-path.js` | remember/recall/link/reflect 4개 hot path p50/p95/p99 측정 | Symbolic Memory feature flag 전환 전후 회귀 기준선 확보 | 조건부 |
 | `scripts/run-e2e-tests.sh` | Docker 기반 E2E 테스트 실행 | CI/CD 파이프라인 또는 대규모 리팩터링 후 회귀 검증 | CI마다 또는 릴리즈 전 |
-| `scripts/smoke-test-symbolic.sh` | v2.8.0 Symbolic Memory end-to-end smoke 검증 | MEMENTO_SYMBOLIC_* 플래그 전환 후 | 조건부 |
+| `scripts/smoke-test-symbolic.sh` | Symbolic Memory end-to-end smoke 검증 | MEMENTO_SYMBOLIC_* 플래그 전환 후 | 조건부 |
 | `scripts/test-llm-callers.mjs` | AutoReflect/ConsolidatorGC/ContradictionDetector/MemoryEvaluator LLM 스키마 E2E 검증 | LLM provider 교체 또는 프롬프트 수정 후 | 조건부 |
 
 ---
@@ -235,7 +229,7 @@ DATABASE_URL=postgresql://... node scripts/cleanup-noise.js --execute --include-
 
 ### 목적
 
-`remember`, `recall`, `link`, `reflect` 4개 hot path의 p50/p95/p99 latency를 측정하고 결과를 JSON으로 저장한다. Symbolic Memory 계층 도입 전후 회귀 기준선 확보를 위해 설계되었으며, 결과는 `scripts/baseline-v27.json`에 저장된다.
+`remember`, `recall`, `link`, `reflect` 4개 hot path의 p50/p95/p99 latency를 측정하고 결과를 JSON으로 저장한다. Symbolic Memory 계층 전환 전후 회귀 기준선 확보를 위해 설계되었으며, 결과는 `scripts/baseline-v27.json`에 저장된다.
 
 ### 선행 조건
 
@@ -271,7 +265,7 @@ DATABASE_URL=postgresql://... node scripts/benchmark-hot-path.js \
 
 ### 목적
 
-v2.8.0 이전에 저장된 파편(기존 코퍼스)에 `ClaimExtractor`를 소급 실행하여 `fragment_claims` 테이블을 채운다. v2.8.0 이후 신규 파편은 `RememberPostProcessor` 8단계 hook에서 실시간 추출되므로, 이 스크립트는 기존 코퍼스 전용이다.
+기존 코퍼스에 `ClaimExtractor`를 소급 실행하여 `fragment_claims` 테이블을 채운다. 실행 이후 새로 들어오는 파편은 `RememberPostProcessor` 8단계 hook에서 실시간 추출되므로, 이 스크립트는 `fragment_claims`가 비어 있는 기존 코퍼스 전용이다.
 
 자세한 실행 가이드는 `docs/operations/backfill-claims.md`를 참조한다.
 
@@ -298,7 +292,7 @@ DATABASE_URL=postgresql://... node scripts/backfill-claims.js \
 
 ### 권장 빈도
 
-일회성. Phase 1 Shadow 활성화(`MEMENTO_SYMBOLIC_SHADOW=true`) 전 1회 실행.
+일회성. Shadow mode 활성화(`MEMENTO_SYMBOLIC_SHADOW=true`) 전 1회 실행.
 
 ---
 
