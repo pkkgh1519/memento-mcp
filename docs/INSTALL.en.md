@@ -114,40 +114,40 @@ psql "$DATABASE_URL" -f lib/memory/migration-017-episodic.sql
 # OAuth client registration
 psql $DATABASE_URL -f lib/memory/migration-021-oauth-clients.sql
 
-# Narrative Reconstruction columns
+# Narrative Reconstruction columns: case_id + structured episode columns in fragments
 psql $DATABASE_URL -f lib/memory/migration-025-case-id-episode.sql
+# Narrative Reconstruction: case_events + case_event_edges + fragment_evidence tables
 psql $DATABASE_URL -f lib/memory/migration-026-case-events.sql
 
-# v2.5.0: Reconsolidation, Episode Continuity, Spreading Activation
+# Reconsolidation, Episode Continuity, Spreading Activation: fragment_links consolidated columns + link_reconsolidations + case_events idempotency_key + keywords GIN index
 psql $DATABASE_URL -f lib/memory/migration-027-v25-reconsolidation-episode-spreading.sql
 
-# v2.5.3: Composite indexes, used_rrf consolidation, superseded_by removal
+# Composite indexes, used_rrf consolidation, superseded_by removal
 psql $DATABASE_URL -f lib/memory/migration-028-v253-improvements.sql
 
-# v2.5.6: SearchParamAdaptor learning table
+# SearchParamAdaptor learning table
 psql $DATABASE_URL -f lib/memory/migration-029-search-param-thresholds.sql
 
-# v2.6.0: search_param_thresholds.key_id INTEGER → TEXT
+# search_param_thresholds.key_id INTEGER → TEXT (UUID compatible)
 psql $DATABASE_URL -f lib/memory/migration-030-search-param-thresholds-key-text.sql
 
-# v2.7.0: content_hash global UNIQUE → per-tenant partial unique index
+# content_hash global UNIQUE → per-tenant partial unique index
 psql $DATABASE_URL -f lib/memory/migration-031-content-hash-per-key.sql
 
-# v2.8.0: fragment_claims table + tenant isolation partial unique
+# Symbolic Memory Layer: fragment_claims table + tenant isolation partial unique
 psql $DATABASE_URL -f lib/memory/migration-032-fragment-claims.sql
 
-# v2.8.0: api_keys.symbolic_hard_gate column
+# api_keys.symbolic_hard_gate column (symbolic hard gate opt-in)
 psql $DATABASE_URL -f lib/memory/migration-033-symbolic-hard-gate.sql
 
-# v2.9.0: api_keys.default_mode column (mode preset system)
-psql $DATABASE_URL -f lib/memory/migration-034-v2.16.0-bundle.sql  # api_keys.default_mode + fragments.affect + fragments.idempotency_key (v2.9.0~v2.12.0 single bundle)
+# api_keys.default_mode + fragments.affect + fragments.idempotency_key (single bundle)
+psql $DATABASE_URL -f lib/memory/migration-034-v2.16.0-bundle.sql
 
-# v2.9.0: fragments.affect column + partial index (affective tagging)
-
-# v2.12.0: fragments.idempotency_key column + two per-tenant partial unique indexes
+# fragments.morpheme_indexed BOOLEAN + backfill + sparse partial index
+psql $DATABASE_URL -f lib/memory/migration-035-morpheme-indexed.sql
 ```
 
-> **Re-running migration-007**: If you change `EMBEDDING_DIMENSIONS` or switch embedding providers, re-run `scripts/post-migrate-flexible-embedding-dims.js` to update the vector column dimensions in both the `fragments` and `morpheme_dict` tables simultaneously. (The backward-compatible symlink at `scripts/migration-007-flexible-embedding-dims.js` was removed in v3.1.0.)
+> **Re-running migration-007**: If you change `EMBEDDING_DIMENSIONS` or switch embedding providers, re-run `scripts/post-migrate-flexible-embedding-dims.js` to update the vector column dimensions in both the `fragments` and `morpheme_dict` tables simultaneously. The backward-compatible symlink at `scripts/migration-007-flexible-embedding-dims.js` has been removed; use `scripts/post-migrate-flexible-embedding-dims.js` directly.
 
 Since v1.8.0, automatic migration is supported. Instead of running each file manually:
 
@@ -167,7 +167,7 @@ DATABASE_URL=postgresql://user:pass@host:port/dbname npm run migrate
 >   WHERE idempotency_key IS NOT NULL AND key_id IS NULL;
 > ```
 
-### v2.9.x to v2.12.0 Upgrade Path
+### Upgrading from before migration-034 bundle
 
 ```bash
 # 1. Update dependencies
@@ -181,7 +181,7 @@ npm run migrate
 #    EMBEDDING_DIMENSIONS=N DATABASE_URL=$DATABASE_URL node scripts/post-migrate-flexible-embedding-dims.js
 #    DATABASE_URL=$DATABASE_URL node scripts/backfill-embeddings.js
 
-# 4. Check .env for new entries
+# 4. Check .env
 #    Add MEMENTO_CLI_REMOTE and MEMENTO_CLI_KEY if using the CLI in remote mode
 
 # 5. Restart the server

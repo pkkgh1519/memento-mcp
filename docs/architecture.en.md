@@ -37,7 +37,7 @@ server.js  (HTTP server)
             +-- EmbeddingCache.js         Query embedding Redis cache (emb:q:{sha256} key, 1-hour TTL, fault-isolated)
             +-- FragmentFactory.js        Fragment creation, validation, PII masking
             +-- FragmentStore.js          PostgreSQL CRUD facade (delegates to FragmentReader + FragmentWriter)
-            +-- FragmentReader.js         Fragment reads. `getById(id, agentId, keyId, groupKeyIds)` -- v2.7.0: groupKeyIds parameter added for single-call lookup of fragments belonging to same-group keys. `getByIds`, `getHistory`, `searchByKeywords`, `searchBySemantic`
+            +-- FragmentReader.js         Fragment reads. `getById(id, agentId, keyId, groupKeyIds)` -- groupKeyIds parameter enables single-call lookup of fragments belonging to same-group keys. `getByIds`, `getHistory`, `searchByKeywords`, `searchBySemantic`
             +-- FragmentWriter.js         Fragment writes (insert, update, delete, incrementAccess, touchLinked)
             +-- FragmentSearch.js         3-layer search orchestration (structural: L1->L2, semantic: L1->L2||L3 RRF merge)
             +-- FragmentIndex.js          Redis L1 index management, getFragmentIndex() singleton factory
@@ -95,17 +95,17 @@ server.js  (HTTP server)
             +-- SearchParamAdaptor.js     key_id x query_type x hour minSimilarity online learning, atomic UPSERT (116 lines)
             +-- HistoryReconstructor.js   case_id/entity-based narrative reconstruction (ordered_timeline, causal_chains, unresolved_branches)
             +-- migration-025-case-id-episode.sql      fragments narrative reconstruction columns (case_id, goal, outcome, phase, resolution_status, assertion_status)
-            +-- migration-026-case-events.sql          case_events + case_event_edges + fragment_evidence tables (Narrative Reconstruction Phase 3)
+            +-- migration-026-case-events.sql          case_events + case_event_edges + fragment_evidence tables (Narrative Reconstruction)
             +-- migration-027-v25-reconsolidation-episode-spreading.sql  search_events/case_events key_id type fix, fragment_links reconsolidation columns + link_reconsolidations table, case_events idempotency_key, fragments.keywords GIN index
             +-- migration-028-composite-indexes.sql  (agent_id, topic, created_at DESC) composite index + (key_id, agent_id, importance DESC) partial index (QuotaChecker/FragmentReader optimization)
             +-- migration-029-search-param-thresholds.sql  search_param_thresholds table (SearchParamAdaptor online learning store, key_id NOT NULL DEFAULT -1)
             +-- migration-030-search-param-thresholds-key-text.sql  search_param_thresholds.key_id INTEGER->TEXT conversion (unified with fragments.key_id TEXT type, sentinel -1 -> '-1')
             +-- migration-031-content-hash-per-key.sql  Global content_hash UNIQUE index replaced with 2 partial unique indexes (cross-tenant ON CONFLICT block): uq_frag_hash_master (key_id IS NULL), uq_frag_hash_per_key (key_id IS NOT NULL, composite)
-            +-- migration-032-fragment-claims.sql        Symbolic Memory Layer -- fragment_claims table (v2.8.0)
-            +-- migration-033-symbolic-hard-gate.sql     api_keys.symbolic_hard_gate BOOLEAN DEFAULT false (v2.8.0)
-            +-- migration-034-api-keys-default-mode.sql  api_keys.default_mode TEXT NULL -- per-key Mode preset default (v2.9.0)
-            +-- migration-034-v2.16.0-bundle-fragments-affect.sql       fragments.affect TEXT DEFAULT 'neutral' CHECK 6-enum constraint (v2.9.0)
-            +-- migration-034-v2.16.0-bundle-idempotency-key.sql        fragments.idempotency_key TEXT NULL + 2 partial UNIQUE indexes: (key_id, idempotency_key) WHERE idempotency_key IS NOT NULL AND key_id IS NOT NULL / (idempotency_key) WHERE idempotency_key IS NOT NULL AND key_id IS NULL (v2.11.0)
+            +-- migration-032-fragment-claims.sql        Symbolic Memory Layer -- fragment_claims table
+            +-- migration-033-symbolic-hard-gate.sql     api_keys.symbolic_hard_gate BOOLEAN DEFAULT false
+            +-- migration-034-api-keys-default-mode.sql  api_keys.default_mode TEXT NULL -- per-key Mode preset default
+            +-- migration-034-v2.16.0-bundle-fragments-affect.sql       fragments.affect TEXT DEFAULT 'neutral' CHECK 6-enum constraint
+            +-- migration-034-v2.16.0-bundle-idempotency-key.sql        fragments.idempotency_key TEXT NULL + 2 partial UNIQUE indexes: (key_id, idempotency_key) WHERE idempotency_key IS NOT NULL AND key_id IS NOT NULL / (idempotency_key) WHERE idempotency_key IS NOT NULL AND key_id IS NULL
 ```
 
 Supporting modules:
@@ -208,9 +208,9 @@ scripts/
 
 ---
 
-## MemoryManager Facade Decomposition (v2.10.0)
+## MemoryManager Facade Decomposition
 
-In v2.10.0, MemoryManager was reduced from 1,252 lines to a 259-line thin facade. Business logic was extracted into 4 processors under `lib/memory/processors/`.
+MemoryManager is a 259-line thin facade. Business logic is separated into 4 processors under `lib/memory/processors/`.
 
 ```
 MemoryManager (259 lines, facade)
@@ -237,7 +237,7 @@ A single `mm.store = stubStore` test mock replacement propagates automatically t
 
 ---
 
-## Idempotency (v2.11.0, migration-034-v2.16.0-bundle)
+## Idempotency (migration-034-v2.16.0-bundle)
 
 A `idempotency_key TEXT NULL` column was added to the `fragments` table with 2 partial UNIQUE indexes.
 
@@ -250,7 +250,7 @@ When `remember()` is called with `params.idempotencyKey`, `FragmentReader.findBy
 
 ---
 
-## Rate Limit Headers (v2.12.0)
+## Rate Limit Headers
 
 `QuotaChecker.getUsage(keyId)` queries the fragment usage count per API key. Results are cached in a module-level in-memory Map with 10-second TTL to block repeated DB queries (upper limit: 1,000 entries).
 
@@ -266,7 +266,7 @@ Headers are omitted when `keyId === null` (master) or `limit === null` (unlimite
 
 ---
 
-## Remote CLI (v2.12.0, M1)
+## Remote CLI
 
 `lib/cli/_mcpClient.js` allows CLI subcommands (`recall`, `remember`, `inspect`, etc.) to connect to a remote MCP endpoint without a local server.
 
@@ -443,7 +443,7 @@ The store for all fragments. This is the core table of the system.
 | phase | TEXT | | Case current phase label |
 | resolution_status | TEXT | CHECK | Case resolution status: open (in progress) / resolved (completed) / wont_fix (closed without resolution) |
 | assertion_status | TEXT | CHECK | Fragment assertion confidence: observed (default, directly witnessed) / inferred (derived) / verified (confirmed) / rejected (dismissed) |
-| affect | TEXT | CHECK, DEFAULT 'neutral' | Emotional state tag at memory storage time. neutral / frustration / confidence / surprise / doubt / satisfaction. Added in migration-034-v2.16.0-bundle |
+| affect | TEXT | CHECK, DEFAULT 'neutral' | Emotional state tag at memory storage time. neutral / frustration / confidence / surprise / doubt / satisfaction |
 
 Index list: content_hash (UNIQUE), topic (B-tree), type (B-tree), keywords (GIN), importance DESC (B-tree), created_at DESC (B-tree), agent_id (B-tree), linked_to (GIN), (ttl_tier, created_at) (B-tree), source (B-tree), verified_at (B-tree), is_anchor WHERE TRUE (partial index), valid_from (B-tree), (topic, type) WHERE valid_to IS NULL (partial index), id WHERE valid_to IS NULL (partial UNIQUE). `idx_fragments_key_workspace` (key_id, workspace) WHERE valid_to IS NULL (composite partial index — optimizes simultaneous key + workspace filtering), `idx_fragments_workspace` (workspace) WHERE workspace IS NOT NULL AND valid_to IS NULL (partial index for workspace-only full scans).
 
@@ -913,30 +913,30 @@ Activated fragments receive an importance boost through `computeEmaRankBoost()` 
 
 ---
 
-## Symbolic Memory Layer (v2.8.0, opt-in)
+## Symbolic Memory Layer (opt-in)
 
-A verification-only layer placed on top of the v2.7.0 probabilistic search pipeline. Disabled by default across the board. No replacement of existing components.
+A verification-only layer placed on top of the probabilistic search pipeline. Disabled by default across the board. No replacement of existing components.
 
 ### Principles
 
 - Verification-only. The FragmentSearch/RRF/Reranker/SpreadingActivation paths are immutable
-- All flags default to false — behavior in default state is byte-for-byte identical to v2.7.0
+- All flags default to false — behavior in default state is byte-for-byte identical to the existing probabilistic path
 - Fail-open: detector errors are swallowed; on SymbolicOrchestrator timeout (50ms), fallback applies
-- Tenant isolation: v2.7.0 14 fixes + v2.8.0 Phase 0.5 SessionLinker patch (4-arg) = full coverage
+- Tenant isolation: SessionLinker.wouldCreateCycle included, 14 call sites fully covered
 
 ### Hook Chain (FragmentSearch.search after line 88)
 
 ```
 probabilistic result
     │
-    ├── shadow hook (Phase 1: observeLatency record only)
+    ├── shadow hook (observeLatency record only)
     │
-    ├── explain hook (Phase 2: ExplanationBuilder.annotate)
+    ├── explain hook (ExplanationBuilder.annotate)
     │       └── 6 reason codes: direct_keyword_match / semantic_similarity
     │           / graph_neighbor_1hop / temporal_proximity
     │           / case_cohort_member / recent_activity_ema
     │
-    ├── cbr filter (Phase 5: CbrEligibility 4 constraints)
+    ├── cbr filter (CbrEligibility 4 constraints)
     │       └── tenant_match / has_case_id / not_quarantine / resolved_state
     │
     └── annotated result → caller
@@ -944,17 +944,17 @@ probabilistic result
 
 ### 9 Core Modules + 5 Rule Files
 
-| Module | Role | Phase |
-|--------|------|-------|
-| SymbolicOrchestrator | rule_version / correlation_id / timeout / fallback management | 0 |
-| SymbolicMetrics | prom-client 4 metrics (claim/warning/gate_blocked/latency) | 0 |
-| ClaimExtractor | Morpheme-based polarity claim extraction | 1 |
-| ClaimStore | TEXT key_id + `IS NOT DISTINCT FROM` isolation | 1 |
-| ClaimConflictDetector | Polarity conflict + severity heuristic | 3 |
-| LinkIntegrityChecker | Cycle detection (reuses sessionLinker.wouldCreateCycle) | 3 |
-| ExplanationBuilder | 6 reason codes annotate (immutable copy) | 2 |
-| PolicyRules | 5 predicate soft gating | 4 |
-| CbrEligibility | 4-constraint CBR filter | 5 |
+| Module | Role |
+|--------|------|
+| SymbolicOrchestrator | rule_version / correlation_id / timeout / fallback management |
+| SymbolicMetrics | prom-client 4 metrics (claim/warning/gate_blocked/latency) |
+| ClaimExtractor | Morpheme-based polarity claim extraction |
+| ClaimStore | TEXT key_id + `IS NOT DISTINCT FROM` isolation |
+| ClaimConflictDetector | Polarity conflict + severity heuristic |
+| LinkIntegrityChecker | Cycle detection (reuses sessionLinker.wouldCreateCycle) |
+| ExplanationBuilder | 6 reason codes annotate (immutable copy) |
+| PolicyRules | 5 predicate soft gating |
+| CbrEligibility | 4-constraint CBR filter |
 
 Rule files (`lib/symbolic/rules/v1/`): `explain.js`, `link-integrity.js`, `claim-conflict.js`, `policy.js`, `proactive-gate.js`
 
@@ -962,7 +962,7 @@ Rule files (`lib/symbolic/rules/v1/`): `explain.js`, `link-integrity.js`, `claim
 
 **migration-032: fragment_claims**
 - `fragment_id TEXT REFERENCES fragments(id)`
-- `key_id TEXT` (replicates v2.7.0 migration-031 content-hash pattern)
+- `key_id TEXT` (same structure as migration-031 content-hash pattern)
 - `rule_version TEXT`
 - `polarity TEXT`, `subject TEXT`, `predicate TEXT`
 - `validation_warnings JSONB`
@@ -982,15 +982,15 @@ Rule files (`lib/symbolic/rules/v1/`): `explain.js`, `link-integrity.js`, `claim
 
 ### Staged Rollout
 
-Refer to CHANGELOG.md v2.8.0 Migration Guide, 8 steps.
+Refer to CHANGELOG.md Migration Guide.
 
-### Tenant Isolation (Phase 0.5)
+### Tenant Isolation
 
-Seals the blind spot in SessionLinker.wouldCreateCycle that was missed by the v2.7.0 9260ff2 tenant isolation fix. Extended `store.isReachable` to a 4-arg signature; all 4 call sites (`autoLinkSessionFragments`, `ReflectProcessor`, `MemoryManager._autoLinkSessionFragments`, `_wouldCreateCycle`) fully propagated. Regression guard: 6 new test cases in `tests/unit/tenant-isolation.test.js`.
+The blind spot in SessionLinker.wouldCreateCycle is sealed. `store.isReachable` takes a 4-arg signature; all 4 call sites (`autoLinkSessionFragments`, `ReflectProcessor`, `MemoryManager._autoLinkSessionFragments`, `_wouldCreateCycle`) are covered. Regression guard: 6 test cases in `tests/unit/tenant-isolation.test.js`.
 
 ---
 
-## v2.9.0 New Components
+## Additional Components
 
 ### ModeRegistry
 
@@ -1045,7 +1045,7 @@ For detailed migration steps, see [docs/embedding-local.md](embedding-local.md).
 
 ### LLM Dispatcher -- CLI Providers
 
-In the existing CLI fallback chain, `codex-cli` now carries `model` / `timeoutMs` settings through to the actual CLI call, and `qwen-cli` has been added as a new provider.
+The `codex-cli` provider carries `model` / `timeoutMs` settings through to the actual CLI call. `qwen-cli` is also supported as a provider.
 
 ```
 LLM_PRIMARY=gemini-cli
@@ -1074,7 +1074,7 @@ LLM_PRIMARY=gemini-cli
 - `geminiTimeoutMs: 60000` (increased from 15000). Accommodates latency growth with large Gemini CLI prompts
 - Circuit breaker failure threshold (LLM_CB_FAILURE_THRESHOLD=5) and OPEN duration (LLM_CB_OPEN_DURATION_MS=60000) remain unchanged
 
-**Complete LLM_PRIMARY allowed values** (v2.9.0):
+**Complete LLM_PRIMARY allowed values**:
 `gemini-cli`, `anthropic`, `openai`, `google-gemini-api`, `groq`, `openrouter`, `xai`, `ollama`, `vllm`, `deepseek`, `mistral`, `cohere`, `zai`, `codex-cli`, `copilot-cli`, `qwen-cli`
 
 ### Search Pipeline -- _suggestion Post-Processing
@@ -1088,10 +1088,10 @@ L1 + L2 + L2.5 + L3
 RRF merge + composite ranking
     |
     v
-Symbolic hook chain (v2.8.0)
+Symbolic hook chain
     |
     v
-RecallSuggestionEngine.analyze()  <- v2.9.0 new
+RecallSuggestionEngine.analyze()
     |
     +-- _suggestion generated (when a rule fires)
     +-- null (normal pattern)
@@ -1100,7 +1100,7 @@ RecallSuggestionEngine.analyze()  <- v2.9.0 new
 Response returned (fragments + _suggestion)
 ```
 
-### DB Schema -- v2.9.0 Migrations
+### DB Schema -- Migrations
 
 **migration-034: api_keys.default_mode**
 - Adds `TEXT DEFAULT NULL` column

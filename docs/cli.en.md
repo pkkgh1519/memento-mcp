@@ -401,7 +401,7 @@ frag-00def456,procedure,deploy-2026,0.70,"deployment complete"
 | `npm run backfill:embeddings` | `node scripts/backfill-embeddings.js` |
 | `npm test` | Jest unit tests + node:test unit tests |
 | `npm run test:integration` | Integration and E2E tests (all) |
-| `npm run test:integration:llm` | LLM provider integration tests (sequential, v2.9.0) |
+| `npm run test:integration:llm` | LLM provider integration tests (sequential) |
 
 ---
 

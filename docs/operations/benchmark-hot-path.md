@@ -5,7 +5,7 @@
 
 ## Purpose
 
-v2.8.0 Symbolic Memory 계층이 hot path(`FragmentSearch.search`, `RememberPostProcessor.run`)에 주는 오버헤드를 측정하고, `scripts/baseline-v27.json` 과 비교하여 회귀를 감시한다.
+Symbolic Memory 계층이 hot path(`FragmentSearch.search`, `RememberPostProcessor.run`)에 주는 오버헤드를 측정하고, `scripts/baseline-v27.json` 과 비교하여 회귀를 감시한다.
 
 측정 대상 hot path 4종:
 
@@ -64,7 +64,7 @@ DATABASE_URL=postgresql://... node scripts/benchmark-hot-path.js \
 {
   "runAt": "2026-04-16T00:00:00.000Z",
   "gitSha": "abc1234",
-  "note": "v2.7.0 baseline for Symbolic Memory regression comparison",
+  "note": "baseline for Symbolic Memory regression comparison",
   "remember": { "p50": 12.3, "p95": 45.6, "p99": 78.9, "n": 100 },
   "recall":   { "p50": 8.1,  "p95": 22.4, "p99": 55.1, "n": 100 },
   "link":     { "p50": 5.2,  "p95": 18.3, "p99": 40.7, "n": 100 },
@@ -77,20 +77,20 @@ DATABASE_URL=postgresql://... node scripts/benchmark-hot-path.js \
 ## Safe Execution Order
 
 1. 테스트 DB 환경에서만 실행. 프로덕션 DB 절대 금지.
-2. 기본 플래그 상태(`MEMENTO_SYMBOLIC_ENABLED=false`)로 v2.7.0 baseline 확보:
+2. 기본 플래그 상태(`MEMENTO_SYMBOLIC_ENABLED=false`)로 baseline 확보:
 
    ```bash
    DATABASE_URL=postgresql://... node scripts/benchmark-hot-path.js
    ```
 
-3. Symbolic 계층 단계별 활성화 후 새 baseline 저장:
+3. Symbolic 계층 활성화 후 새 baseline 저장:
 
    ```bash
    MEMENTO_SYMBOLIC_ENABLED=true \
    MEMENTO_SYMBOLIC_SHADOW=true \
    DATABASE_URL=postgresql://... \
      node scripts/benchmark-hot-path.js \
-     --output scripts/baseline-v28-phase1.json
+     --output scripts/baseline-symbolic-shadow.json
    ```
 
 4. 단계별 비교:
@@ -108,5 +108,5 @@ benchmark 실행 중 Prometheus 메트릭을 함께 관찰하면 hot path 오버
 
 ## Notes
 
-- `scripts/baseline-v27.json`은 Phase 0 스켈레톤 상태로 커밋되어 있다. 실제 측정 전에는 모든 수치가 `null`이다.
+- `scripts/baseline-v27.json`은 초기 스켈레톤 상태로 커밋되어 있다. 실제 측정 전에는 모든 수치가 `null`이다.
 - `link` 반복 횟수는 `remember`에서 생성한 fragment 쌍으로 제한된다. `--link N`이 실제 생성된 fragment 쌍 수보다 크면 실제 실행 횟수가 더 적을 수 있다.

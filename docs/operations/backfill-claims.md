@@ -5,10 +5,10 @@
 
 ## Purpose
 
-v2.8.0 Symbolic Memory 도입 후 기존 파편에 대해 ClaimExtractor를 소급 실행하여 `fragment_claims` 테이블을 채운다. Phase 1 shadow mode 진입 후 Phase 2 (`MEMENTO_SYMBOLIC_EXPLAIN=true`) 활성화 전에 반드시 선행해야 한다.
+기존 파편에 대해 ClaimExtractor를 소급 실행하여 `fragment_claims` 테이블을 채운다. Shadow mode(`MEMENTO_SYMBOLIC_SHADOW=true`) 진입 후 `MEMENTO_SYMBOLIC_EXPLAIN=true` 활성화 전에 반드시 선행해야 한다.
 
 - 실행 시점 이후 새로 들어오는 파편은 `RememberPostProcessor`의 8단계 hook에서 실시간 추출된다.
-- 이 스크립트는 기존 v2.7.0 이전 코퍼스 전용이다.
+- 이 스크립트는 `fragment_claims`가 비어 있는 기존 코퍼스 전용이다.
 - `MEMENTO_SYMBOLIC_ENABLED` 등 런타임 플래그와 무관하게 스크립트 자체가 동작을 결정한다.
 
 ## CLI Options
