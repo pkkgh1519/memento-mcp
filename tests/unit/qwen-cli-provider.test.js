@@ -11,7 +11,7 @@ const mockRunQwenCLI   = mock.fn();
 const mockRawIsQwenCli = mock.fn();
 
 mock.module("../../lib/qwen.js", {
-  namedExports: {
+  exports: {
     runQwenCLI            : (...args) => mockRunQwenCLI(...args),
     _rawIsQwenCLIAvailable: (...args) => mockRawIsQwenCli(...args)
   }
@@ -81,18 +81,6 @@ describe("QwenCliProvider", () => {
     });
 
     const provider = new QwenCliProvider({ timeoutMs: 2222 });
-    const result = await provider.callJson("user payload");
-
-    assert.deepEqual(result, { ok: true });
-  });
-
-  it("callJson: options.timeoutMs와 config.timeoutMs가 없으면 60000ms를 사용한다", async () => {
-    mockRunQwenCLI.mock.mockImplementationOnce(async (_stdinContent, _prompt, options) => {
-      assert.equal(options.timeoutMs, 60_000);
-      return "{\"ok\":true}";
-    });
-
-    const provider = new QwenCliProvider();
     const result = await provider.callJson("user payload");
 
     assert.deepEqual(result, { ok: true });

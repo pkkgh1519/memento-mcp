@@ -10,7 +10,6 @@
 
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
-import crypto from "node:crypto";
 import net from "node:net";
 import pg from "pg";
 
@@ -40,17 +39,13 @@ before(async () => {
     return;
   }
   pool = new pg.Pool({
-    connectionString: process.env.DATABASE_URL,
-    max: 1
+    connectionString: process.env.DATABASE_URL
   });
 });
 
 const S = "agent_memory";
-const RUN_ID = crypto.randomUUID().slice(0, 8);
-const V1_ID = `test-pt-v1-${RUN_ID}`;
-const V2_ID = `test-pt-v2-${RUN_ID}`;
 
-describe("Point-in-time 쿼리", { concurrency: false }, () => {
+describe("Point-in-time 쿼리", () => {
   before(async () => {
     if (!dbAvailable) return;
     /** RLS: default 에이전트 컨텍스트 설정 */
@@ -65,12 +60,12 @@ describe("Point-in-time 쿼리", { concurrency: false }, () => {
           (id, content, topic, type, importance, content_hash,
            valid_from, valid_to, agent_id)
       VALUES
-          ($1, 'v1 content', 'test', 'fact', 0.7, $2,
+          ('test-pt-v1', 'v1 content', 'test', 'fact', 0.7, 'hash-pt-v1',
            '2026-01-01'::timestamptz, '2026-02-01'::timestamptz, 'default'),
-          ($3, 'v2 content', 'test', 'fact', 0.7, $4,
+          ('test-pt-v2', 'v2 content', 'test', 'fact', 0.7, 'hash-pt-v2',
            '2026-02-01'::timestamptz, NULL, 'default')
       ON CONFLICT (id) DO NOTHING
-    `, [V1_ID, `hash-pt-v1-${RUN_ID}`, V2_ID, `hash-pt-v2-${RUN_ID}`]);
+    `);
   });
 
   test("2026-01-15 시점에는 v1만 반환", async () => {
@@ -81,10 +76,10 @@ describe("Point-in-time 쿼리", { concurrency: false }, () => {
       WHERE  agent_id = 'default'
         AND  valid_from <= '2026-01-15'::timestamptz
         AND  (valid_to IS NULL OR valid_to > '2026-01-15'::timestamptz)
-        AND  id = ANY($1::text[])
-    `, [[V1_ID, V2_ID]]);
+        AND  id IN ('test-pt-v1','test-pt-v2')
+    `);
     assert.strictEqual(rows.length, 1);
-    assert.strictEqual(rows[0].id, V1_ID);
+    assert.strictEqual(rows[0].id, "test-pt-v1");
   });
 
   test("2026-02-15 시점에는 v2만 반환", async () => {
@@ -95,10 +90,10 @@ describe("Point-in-time 쿼리", { concurrency: false }, () => {
       WHERE  agent_id = 'default'
         AND  valid_from <= '2026-02-15'::timestamptz
         AND  (valid_to IS NULL OR valid_to > '2026-02-15'::timestamptz)
-        AND  id = ANY($1::text[])
-    `, [[V1_ID, V2_ID]]);
+        AND  id IN ('test-pt-v1','test-pt-v2')
+    `);
     assert.strictEqual(rows.length, 1);
-    assert.strictEqual(rows[0].id, V2_ID);
+    assert.strictEqual(rows[0].id, "test-pt-v2");
   });
 
   test("현재 시점: valid_to IS NULL만 반환", async () => {
@@ -107,10 +102,10 @@ describe("Point-in-time 쿼리", { concurrency: false }, () => {
     const { rows } = await pool.query(`
       SELECT id FROM ${S}.fragments
       WHERE  agent_id = 'default' AND valid_to IS NULL
-        AND  id = ANY($1::text[])
-    `, [[V1_ID, V2_ID]]);
+        AND  id IN ('test-pt-v1','test-pt-v2')
+    `);
     assert.strictEqual(rows.length, 1);
-    assert.strictEqual(rows[0].id, V2_ID);
+    assert.strictEqual(rows[0].id, "test-pt-v2");
   });
 
   test("searchAsOf: v1 시점 조회 결과에 v1 포함, v2 미포함", async () => {
@@ -124,12 +119,12 @@ describe("Point-in-time 쿼리", { concurrency: false }, () => {
       WHERE  agent_id   = 'default'
         AND  valid_from <= $1::timestamptz
         AND  (valid_to IS NULL OR valid_to > $1::timestamptz)
-        AND  id = ANY($2::text[])
+        AND  id IN ('test-pt-v1','test-pt-v2')
       ORDER  BY importance DESC
-    `, [ts, [V1_ID, V2_ID]]);
+    `, [ts]);
     const ids = rows.map(r => r.id);
-    assert.ok(ids.includes(V1_ID), "v1 포함 필요");
-    assert.ok(!ids.includes(V2_ID), "v2 제외 필요");
+    assert.ok(ids.includes("test-pt-v1"), "v1 포함 필요");
+    assert.ok(!ids.includes("test-pt-v2"), "v2 제외 필요");
   });
 
   test("valid_from = valid_to 경계값: 정확히 만료된 시점은 반환하지 않음", async () => {
@@ -141,11 +136,11 @@ describe("Point-in-time 쿼리", { concurrency: false }, () => {
       WHERE  agent_id = 'default'
         AND  valid_from <= '2026-02-01'::timestamptz
         AND  (valid_to IS NULL OR valid_to > '2026-02-01'::timestamptz)
-        AND  id = ANY($1::text[])
-    `, [[V1_ID, V2_ID]]);
+        AND  id IN ('test-pt-v1','test-pt-v2')
+    `);
     const ids = rows.map(r => r.id);
-    assert.ok(!ids.includes(V1_ID), "경계 시점에서 v1은 만료됨");
-    assert.ok(ids.includes(V2_ID), "v2는 해당 시점부터 유효");
+    assert.ok(!ids.includes("test-pt-v1"), "경계 시점에서 v1은 만료됨");
+    assert.ok(ids.includes("test-pt-v2"), "v2는 해당 시점부터 유효");
   });
 
   after(async () => {
@@ -153,8 +148,8 @@ describe("Point-in-time 쿼리", { concurrency: false }, () => {
     await pool.query(`SET app.current_agent_id = 'default'`);
     await pool.query(`
       DELETE FROM ${S}.fragments
-      WHERE id = ANY($1::text[])
-    `, [[V1_ID, V2_ID]]);
+      WHERE id IN ('test-pt-v1','test-pt-v2')
+    `);
     await pool.end();
   });
 });

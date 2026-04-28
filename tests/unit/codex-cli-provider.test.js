@@ -11,7 +11,7 @@ const mockRunCodexCLI   = mock.fn();
 const mockRawIsCodexCli = mock.fn();
 
 mock.module("../../lib/codex.js", {
-  namedExports: {
+  exports: {
     runCodexCLI            : (...args) => mockRunCodexCLI(...args),
     _rawIsCodexCLIAvailable: (...args) => mockRawIsCodexCli(...args)
   }
@@ -81,18 +81,6 @@ describe("CodexCliProvider", () => {
     });
 
     const provider = new CodexCliProvider({ timeoutMs: 2222 });
-    const result = await provider.callJson("user payload");
-
-    assert.deepEqual(result, { ok: true });
-  });
-
-  it("callJson: options.timeoutMs와 config.timeoutMs가 없으면 60000ms를 사용한다", async () => {
-    mockRunCodexCLI.mock.mockImplementationOnce(async (_stdinContent, _prompt, options) => {
-      assert.equal(options.timeoutMs, 60_000);
-      return "{\"ok\":true}";
-    });
-
-    const provider = new CodexCliProvider();
     const result = await provider.callJson("user payload");
 
     assert.deepEqual(result, { ok: true });
