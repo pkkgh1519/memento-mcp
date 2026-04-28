@@ -92,6 +92,7 @@ describe("llmJson chain deadline with concurrency", () => {
       );
 
       assert.equal(mockSemaphore.acquire.mock.callCount(), 1);
+      assert.equal(mockSemaphore.acquire.mock.calls[0].arguments[0], 40);
       assert.equal(mockSemaphore.release.mock.callCount(), 1);
       assert.equal(providerCallCount, 0);
     } finally {
