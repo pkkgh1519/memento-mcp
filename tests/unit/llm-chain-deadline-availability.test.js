@@ -7,6 +7,8 @@ import assert from "node:assert/strict";
 
 let now = 1_000;
 let providerCallCount = 0;
+let availabilityMode = "advance-clock";
+const availabilityTimeouts = [];
 
 class MockProvider {
   constructor(config) {
@@ -14,7 +16,11 @@ class MockProvider {
     this.config = config;
   }
 
-  async isAvailable() {
+  async isAvailable(timeoutMs) {
+    availabilityTimeouts.push(timeoutMs);
+    if (availabilityMode === "hang") {
+      return new Promise(() => {});
+    }
     now += 50;
     return true;
   }
@@ -59,6 +65,8 @@ describe("llmJson chain deadline availability budget", () => {
     const originalNow = Date.now;
     Date.now = () => now;
     providerCallCount = 0;
+    availabilityMode = "advance-clock";
+    availabilityTimeouts.length = 0;
 
     try {
       await assert.rejects(
@@ -67,8 +75,25 @@ describe("llmJson chain deadline availability budget", () => {
       );
 
       assert.equal(providerCallCount, 0);
+      assert.equal(availabilityTimeouts[0], 40);
     } finally {
       Date.now = originalNow;
     }
+  });
+
+  it("isAvailable promise가 끝나지 않아도 chain deadline에서 중단한다", async () => {
+    providerCallCount = 0;
+    availabilityMode = "hang";
+    availabilityTimeouts.length = 0;
+
+    const started = performance.now();
+    await assert.rejects(
+      () => llmJson("test"),
+      /chain deadline exceeded after 40ms/
+    );
+
+    assert.equal(providerCallCount, 0);
+    assert.equal(availabilityTimeouts[0], 40);
+    assert.ok(performance.now() - started < 200);
   });
 });
