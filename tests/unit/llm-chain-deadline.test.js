@@ -34,8 +34,11 @@ mock.module("../../lib/config.js", {
       { provider: "primary", timeoutMs: 70 },
       { provider: "fallback", timeoutMs: 70 }
     ],
-    LLM_PROVIDER_TIMEOUT_MS: 60_000,
-    LLM_CHAIN_TIMEOUT_MS: 80
+    LLM_PROVIDER_TIMEOUT_MS : 60_000,
+    LLM_CHAIN_TIMEOUT_MS    : 80,
+    LLM_CONCURRENCY_ENABLED : false,
+    LLM_CONCURRENCY_WAIT_MS : 30_000,
+    getConcurrencyLimit     : () => 1
   }
 });
 
