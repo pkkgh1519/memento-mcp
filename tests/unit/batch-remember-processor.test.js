@@ -68,7 +68,18 @@ function makeMockStore() {
  * opts.quotaRows로 api_keys/fragments 카운트 응답을 제어한다.
  */
 function makeMockClient(opts = {}) {
-  const insertFn  = opts.insertFn  || ((sql, params) => ({ rows: [{ id: params[0] }] }));
+  /**
+   * 기본 insertFn: multi-row INSERT params 구조(24컬럼 × N행)에서
+   * 첫 번째 파라미터($1)가 각 행의 id이므로 stride=24로 추출하여 rows 반환.
+   */
+  const insertFn  = opts.insertFn  || ((sql, params) => {
+    const COLS = 24;
+    const rows = [];
+    for (let i = 0; i < params.length; i += COLS) {
+      rows.push({ id: params[i] });
+    }
+    return { rows };
+  });
   const quotaRows = opts.quotaRows || null;
 
   return {
@@ -187,13 +198,14 @@ describe("BatchRememberProcessor", () => {
     assert.equal(result.skipped, 2);
   });
 
-  it("부분 INSERT 실패 시 결과 집계", async () => {
-    let callCount = 0;
+  it("multi-row INSERT 실패 시 전체 청크 롤백 후 에러 전파 (Fail-fast)", async () => {
+    /**
+     * 행별 직렬 INSERT에서는 부분 실패가 가능했으나, multi-row 단일 SQL로
+     * 변경 후 청크 내 제약 위반은 전체 롤백 + raw 에러 전파가 된다.
+     */
     const failClient = makeMockClient({
-      insertFn: (_sql, params) => {
-        callCount++;
-        if (callCount === 2) throw new Error("duplicate key");
-        return { rows: [{ id: params[0] }] };
+      insertFn: (_sql, _params) => {
+        throw new Error("duplicate key");
       }
     });
 
@@ -205,14 +217,10 @@ describe("BatchRememberProcessor", () => {
     processor.setPool(makeMockPool(failClient));
 
     const fragments = [validItem(0), validItem(1), validItem(2)];
-    const result    = await processor.process({ fragments });
-
-    assert.equal(result.inserted, 2);
-    assert.equal(result.skipped, 1);
-
-    const failed = result.results.find(r => !r.success);
-    assert.ok(failed);
-    assert.equal(failed.error, "duplicate key");
+    await assert.rejects(
+      () => processor.process({ fragments }),
+      (err) => err.message.includes("duplicate key")
+    );
   });
 
   it("keyId 없이 master key 모드: 할당량 검사 없이 INSERT", async () => {
@@ -346,11 +354,13 @@ describe("BatchRememberProcessor", () => {
     assert.ok(sqls.includes("COMMIT"), "COMMIT 누락");
   });
 
-  it("INSERT 예외 발생 시 전체 트랜잭션은 ROLLBACK 없이 부분 실패로 처리된다", async () => {
-    let callCount = 0;
+  it("INSERT 예외 발생 시 전체 트랜잭션 ROLLBACK 후 에러 전파 (Fail-fast)", async () => {
+    /**
+     * multi-row 단일 SQL에서 예외가 발생하면 청크 전체가 롤백되고
+     * raw 에러가 호출자에게 전파된다 (chunk halving/부분 성공 금지).
+     */
     const allFailClient = makeMockClient({
       insertFn: (_sql, _params) => {
-        callCount++;
         throw new Error("insert error");
       }
     });
@@ -363,13 +373,10 @@ describe("BatchRememberProcessor", () => {
     processor.setPool(makeMockPool(allFailClient));
 
     const fragments = [validItem(0), validItem(1)];
-    const result    = await processor.process({ fragments });
-
-    assert.equal(result.inserted, 0);
-    assert.equal(result.skipped, 2);
-    for (const r of result.results) {
-      assert.equal(r.success, false);
-    }
+    await assert.rejects(
+      () => processor.process({ fragments }),
+      (err) => err.message.includes("insert error")
+    );
   });
 
 });

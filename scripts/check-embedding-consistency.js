@@ -3,7 +3,7 @@
  *
  * 작성자: 최진호
  * 작성일: 2026-04-18
- * 수정일: 2026-04-20 (v2.12.0 문서 현행화 반영)
+ * 수정일: 2026-04-29 (v3.2.0: morpheme_indexed=false Consistency Gate 카운트 추가)
  *
  * 목적: EMBEDDING_DIMENSIONS 설정값과 DB의 실제 벡터 차원이 일치하는지 확인한다.
  *       불일치 시 server.js 기동 전에 명확한 가이드를 출력하고 false를 반환한다.
@@ -49,6 +49,19 @@ export async function checkEmbeddingConsistency() {
     console.error("  2. EMBEDDING_DIMENSIONS=N npm run migrate-007 실행 + node scripts/backfill-embeddings.js");
     console.error("\n데이터 혼합 방지를 위해 기동을 중단합니다.\n");
     return false;
+  }
+
+  try {
+    const { rows } = await pool.query(`
+      SELECT count(*)::int AS cnt
+      FROM agent_memory.fragments
+      WHERE morpheme_indexed = false
+    `);
+    if (rows.length > 0 && rows[0].cnt > 0) {
+      console.warn(`[embedding-consistency] morpheme_indexed=false 파편 ${rows[0].cnt}개 (형태소 미인덱싱)`);
+    }
+  } catch {
+    /** migration-035 미적용 환경에서는 컬럼 미존재 → 무시 */
   }
 
   return true;

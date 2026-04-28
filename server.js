@@ -333,6 +333,12 @@ async function gracefulShutdown(signal) {
   const evaluatorDrain = getMemoryEvaluator().stop();
   if (evaluatorDrain) drainPromises.push(evaluatorDrain);
 
+  /** Phase 4: 형태소 등록 drain (미완료 morpheme fire-and-forget 작업 완료 대기) */
+  try {
+    const { MemoryManager } = await import("./lib/memory/MemoryManager.js");
+    drainPromises.push(MemoryManager.getInstance().drainMorpheme());
+  } catch { /* MemoryManager 미초기화 시 skip */ }
+
   if (globalEmbeddingWorker) {
     const embeddingDrain = globalEmbeddingWorker.stop();
     if (embeddingDrain) drainPromises.push(embeddingDrain);

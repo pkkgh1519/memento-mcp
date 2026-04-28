@@ -402,7 +402,7 @@ frag-00def456,procedure,deploy-2026,0.70,"배포 완료"
 | `npm run backfill:embeddings` | `node scripts/backfill-embeddings.js` |
 | `npm test` | Jest 단위 테스트 + node:test 단위 테스트 |
 | `npm run test:integration` | 통합/E2E 테스트 일괄 실행 |
-| `npm run test:integration:llm` | LLM provider 통합 테스트 순차 실행 (v2.9.0) |
+| `npm run test:integration:llm` | LLM provider 통합 테스트 순차 실행 |
 
 ---
 

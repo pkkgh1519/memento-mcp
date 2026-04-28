@@ -1,5 +1,8 @@
 # API Reference
 
+작성자: 최진호
+수정일: 2026-04-27
+
 MCP 도구 상세는 [SKILL.md](../SKILL.md) 참조.
 
 ---
@@ -66,7 +69,7 @@ L1 캐시와 Working Memory가 비활성화되지만 핵심 기억 저장/검색
 
 인증 방식은 두 가지다. Streamable HTTP는 `initialize` 요청 시 `Authorization: Bearer <MEMENTO_ACCESS_KEY>` 헤더로 인증하며 이후 세션으로 유지된다. Legacy SSE는 `/sse?accessKey=<MEMENTO_ACCESS_KEY>` 쿼리 파라미터로 인증한다.
 
-### HTTP 응답 헤더 — Rate Limit (v2.12.0)
+### HTTP 응답 헤더 — Rate Limit
 
 할당량(fragment_limit)이 설정된 API 키로 MCP 도구를 호출할 때 아래 헤더가 응답에 포함된다.
 
@@ -92,13 +95,13 @@ X-RateLimit-Resource: fragments
 
 - master key (`MEMENTO_ACCESS_KEY`): `permissions=null`로 처리되며 모든 도구를 호출할 수 있다.
 - API key (`mmcp_xxx`): 키 생성 시 지정된 `permissions` 배열 기준으로 도구 접근이 제한된다. 배열에 필요한 권한이 없으면 즉시 거부된다.
-- `TOOL_PERMISSIONS` 맵에 등록된 도구는 해당 권한 레벨이 요구된다. 맵에 등록되지 않은 도구명은 `required=null`로 간주되어 권한 검사를 통과한다. 신규 도구를 RBAC 경계에 편입하려면 `TOOL_PERMISSIONS` 맵에 명시적으로 등록해야 한다.
+- `TOOL_PERMISSIONS` 맵에 등록된 도구는 해당 권한 레벨이 요구된다. 맵에 등록되지 않은 도구명은 `required=null`로 간주되어 권한 검사를 통과한다. 도구를 RBAC 경계에 편입하려면 `TOOL_PERMISSIONS` 맵에 명시적으로 등록해야 한다.
 - 권한 레벨은 세 가지다: `read`(recall/context/memory_stats 등), `write`(remember/forget/amend 등), `admin`(memory_consolidate/apply_update 등). `admin` 권한을 가진 키는 모든 레벨을 호출할 수 있다.
 - 타 테넌트(다른 API 키)가 소유한 파편에 forget/amend/link 요청 시 `"Fragment not found"` 에러가 반환된다. SQL 레벨에서 `key_id` 조건으로 격리되므로 존재 여부조차 노출되지 않는다.
 
 보호된 리소스에 인증 없이 접근하면 `401 Unauthorized`와 함께 `WWW-Authenticate: Bearer resource_metadata="</.well-known/oauth-protected-resource URL>"` 헤더가 반환된다.
 
-### Mode Preset (v2.9.0)
+### Mode Preset
 
 `X-Memento-Mode` 헤더 또는 `initialize` 요청의 `params.mode`로 세션 동작 모드를 지정할 수 있다. admin console에서 `api_keys.default_mode`를 설정하면 키 단위 기본값을 고정할 수 있다.
 
@@ -106,7 +109,7 @@ X-RateLimit-Resource: fragments
 |--------|------|----------|
 | `recall-only` | 읽기 전용 세션. 기억 저장·수정 도구 차단. 검색 전용 에이전트에 사용. | recall, context, memory_stats, graph_explore, fragment_history, reconstruct_history, search_traces, get_skill_guide, tool_feedback |
 | `write-only` | 저장 전용 세션. recall, context 차단. 데이터 수집 파이프라인에 사용. | remember, batch_remember, forget, amend, link, reflect |
-| `onboarding` | 신규 사용자 안내 세션. get_skill_guide를 첫 도구로 강제 노출. | 전체 (get_skill_guide 우선 안내) |
+| `onboarding` | 사용자 안내 세션. get_skill_guide를 첫 도구로 강제 노출. | 전체 (get_skill_guide 우선 안내) |
 | `audit` | 읽기·추적 전용 세션. 쓰기 도구 전체 차단. 감사·컴플라이언스 목적. | recall, context, memory_stats, graph_explore, fragment_history, reconstruct_history, search_traces |
 
 HTTP 헤더로 설정:
@@ -125,11 +128,11 @@ X-Memento-Mode: recall-only
 }
 ```
 
-### 세션 재사용 (v2.9.0)
+### 세션 재사용
 
 토큰 기반 세션 재사용이 활성화되어 있다. 클라이언트가 `Mcp-Session-Id` 없이 재연결하더라도 동일 Bearer 토큰이면 서버가 기존 세션을 자동으로 복구한다. 클라이언트 측에는 투명하게 동작하며 별도 설정이 필요하지 않다.
 
-### POST /session/rotate (v2.15.0)
+### POST /session/rotate
 
 세션 ID 탈취 의심 시 진행 중 상태를 유지한 채 세션 식별자만 재발급한다. Redis에 저장된 세션 데이터는 그대로 보존되고 ID만 교체되므로 기억 파편과 MCP 연결 상태에 영향 없다.
 
@@ -166,7 +169,7 @@ Content-Type: application/json
 - 메트릭: `mcp_session_rotation_total{reason}` 카운터 + `mcp_rotate_rate_limited_total` 카운터
 - CLI: `memento-mcp session rotate <sessionId>` 서브명령으로 동일 기능 호출. 자세한 사용법은 `docs/cli.md` 참조
 
-### tools/list 응답 — meta 필드 (v2.9.0)
+### tools/list 응답 — meta 필드
 
 각 도구의 `tools/list` 응답 항목에 `meta` 필드가 추가되었다.
 
@@ -240,7 +243,7 @@ RFC 7591 동적 클라이언트 등록. 인증 불필요.
 }
 ```
 
-> **API 키 바인딩 (v2.8.4)**: `Authorization: Bearer <API 키>` 헤더를 함께 전송하면 `client_id = "<name>_<keyIdHex8>"` 형식의 URL-safe 이름으로 자동 등록된다. 이후 `/authorize`에서 해당 API 키의 tenant 격리 컨텍스트가 자동 복원된다. 헤더 없이 등록하면 기존 랜덤 `client_id` 방식으로 fallback된다.
+> **API 키 바인딩**: `Authorization: Bearer <API 키>` 헤더를 함께 전송하면 `client_id = "<name>_<keyIdHex8>"` 형식의 URL-safe 이름으로 자동 등록된다. 이후 `/authorize`에서 해당 API 키의 tenant 격리 컨텍스트가 자동 복원된다. 헤더 없이 등록하면 랜덤 `client_id` 방식으로 fallback된다.
 
 ### GET /authorize
 
@@ -352,7 +355,7 @@ API 키의 일일 호출 제한을 변경한다. 마스터 키 인증 필요.
 
 `affect` 필드: 해당 파편에 태그된 정서 상태. 저장 시 지정한 값과 동일하게 반환된다.
 
-`_meta` (v2.11.0+): recall/context 응답 최상위에 추가된 메타데이터 래퍼. 기존 top-level 필드(_searchEventId, _memento_hint, _suggestion)와 동일한 값을 구조화된 형태로 제공한다.
+`_meta`: recall/context 응답 최상위의 메타데이터 래퍼.
 
 ```json
 {
@@ -370,9 +373,7 @@ API 키의 일일 호출 제한을 변경한다. 마스터 키 인증 필요.
 | `_meta.hints` | 시스템이 제안하는 검색 개선 힌트 배열 |
 | `_meta.suggestion` | RecallSuggestionEngine 생성 힌트 객체 (감지된 문제 없으면 null) |
 
-v3.1.0에서 top-level `_searchEventId` / `_memento_hint` / `_suggestion` mirror 필드가 **제거됐다**. 동일 값은 `_meta.searchEventId` / `_meta.hints` / `_meta.suggestion`에만 존재한다. 클라이언트는 `_meta` 경로만 사용해야 한다.
-
-`_meta.suggestion` (v2.9.0+): RecallSuggestionEngine이 현재 검색 패턴을 분석하여 생성한 힌트 객체. 감지된 문제가 없으면 `null`이다. (v3.0.0까지 top-level `_suggestion`에도 mirror 제공. v3.1.0에서 mirror 제거.)
+`_meta.suggestion`: RecallSuggestionEngine이 현재 검색 패턴을 분석하여 생성한 힌트 객체. 감지된 문제가 없으면 `null`이다.
 
 ```json
 {
@@ -394,7 +395,7 @@ v3.1.0에서 top-level `_searchEventId` / `_memento_hint` / `_suggestion` mirror
 | `large_limit_no_budget` | pageSize=50 요청이고 tokenBudget 미지정인 경우 | tokenBudget 명시로 응답 크기 제어 |
 | `no_type_filter_noisy` | type 필터 없이 10건 이상 반환되었고 depth도 미지정인 경우 | type 또는 depth 필터 추가 |
 
-`explanation` (v2.8.0+, `MEMENTO_SYMBOLIC_EXPLAIN=true` 시에만 포함): 해당 파편이 검색 결과에 포함된 이유를 최대 3개 reason code로 설명한다.
+`explanation` (`MEMENTO_SYMBOLIC_EXPLAIN=true` 시에만 포함): 해당 파편이 검색 결과에 포함된 이유를 최대 3개 reason code로 설명한다.
 
 ```json
 {
@@ -546,7 +547,7 @@ violations 있는 경우 (soft gate — 저장됨):
 }
 ```
 
-`validation_warnings` (v2.8.0+): PolicyRules soft gating violations rule 이름 string[]. violations 없으면 필드 자체 생략. `MEMENTO_SYMBOLIC_POLICY_RULES=false` (기본값) 시 항상 생략. 활성화 시 다음 5가지 predicate 중 실패한 것이 누적된다:
+`validation_warnings`: PolicyRules soft gating violations rule 이름 string[]. violations 없으면 필드 자체 생략. `MEMENTO_SYMBOLIC_POLICY_RULES=false` (기본값) 시 항상 생략. 활성화 시 다음 5가지 predicate 중 실패한 것이 누적된다:
 
 - `decisionHasRationale` — decision 타입이 linked_to 2건 이상 또는 근거 키워드 미포함
 - `errorHasResolutionPath` — error 타입이 cause/fix 키워드 또는 resolution_status 미포함
@@ -588,6 +589,17 @@ violations 있는 경우 (soft gate — 저장됨):
 | fragments | object[] | O | 저장할 파편 배열 (최대 200건). 각 항목은 content(string, 필수), topic(string, 필수), type(string, 필수), importance(number), keywords(string[]), workspace(string), idempotencyKey(string, 최대 128자) 포함. |
 | workspace | string | - | 배치 기본 워크스페이스. 개별 파편에 workspace 미지정 시 이 값으로 대체. 미지정 시 키의 default_workspace 적용. |
 | agentId | string | - | 에이전트 ID (RLS 격리용) |
+
+### 사전 validate 에러 코드
+
+각 파편은 INSERT 전 아래 조건을 검사한다. 실패한 파편은 `results[i].success = false`로 기록되며 배열의 나머지 파편 저장에는 영향을 주지 않는다.
+
+| 에러 메시지 | 원인 |
+|-|-|
+| `content is required` | `content` 필드가 null 또는 undefined |
+| `type is required` | `type` 필드 누락 |
+| `Content too short: length < 10 and word count < 3` | `FragmentFactory.validateContent` 판정 실패 — 내용이 너무 짧음 |
+| `fragment_limit_exceeded` | API 키 파편 할당량 초과 |
 
 ---
 
@@ -663,6 +675,35 @@ violations 있는 경우 (soft gate — 저장됨):
 | narrative_summary | string | - | 세션 전체를 3~5문장의 서사(narrative)로 요약. episode 파편으로 저장되어 세션 간 맥락 연속성에 기여. 생략 시 summary에서 자동 생성. |
 | agentId | string | - | 에이전트 ID |
 | task_effectiveness | object | - | 세션 도구 사용 효과성 종합 평가. overall_success(boolean), tool_highlights(string[]), tool_pain_points(string[]) 포함. |
+
+### 응답 구조
+
+```json
+{
+  "count": 5,
+  "fragments": [
+    { "id": "frag-...", "content": "...", "type": "fact", "keywords": ["..."] }
+  ],
+  "breakdown": {
+    "summary": 2,
+    "decisions": 1,
+    "errors": 0,
+    "procedures": 1,
+    "questions": 1,
+    "episode": 1
+  }
+}
+```
+
+`breakdown` 필드는 카테고리별 저장된 파편 수를 나타낸다. `episode`는 narrative_summary가 있을 때만 포함된다. 내부적으로 5개 카테고리는 단일 `batchRememberProcessor` 호출로 처리되지만 결과는 `_category` 메타를 기반으로 카테고리별 재집계되므로 breakdown shape이 보존된다.
+
+### AutoReflect 타임아웃
+
+세션 종료 시 자동 실행되는 AutoReflect는 Gemini CLI 호출에 `GEMINI_TIMEOUT_MS` 환경변수로 설정된 타임아웃(기본값 30000ms)을 적용한다. 외부 게이트웨이(예: claude.ai MCP 프록시) 60s 컷오프 대비 30s 마진을 확보하기 위해 30s로 설정되어 있다. 40000ms 이상으로 변경하지 않는다.
+
+| 환경변수 | 기본값 | 설명 |
+|-|-|-|
+| `GEMINI_TIMEOUT_MS` | 30000 | AutoReflect의 Gemini CLI 호출 타임아웃 (ms). `lib/memory/AutoReflect.js` 상수 `GEMINI_TIMEOUT_MS`로 export됨 |
 
 ---
 

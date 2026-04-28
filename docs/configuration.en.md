@@ -34,24 +34,23 @@
 | DEDUP_MIN_FRAGMENTS | 5 | Minimum fragment count for dedup. Deduplication is skipped below this threshold |
 | COMPRESS_AGE_DAYS | 30 | Memory compression target inactive days |
 | COMPRESS_MIN_GROUP | 3 | Minimum compression group size. Groups below this threshold are not compressed |
-| RERANKER_ENABLED | false | Enable cross-encoder reranking. When true, recall results are re-ranked by cross-encoder |
-| RERANKER_MODEL | minilm | ONNX model for in-process reranking. `minilm` (default, ~80MB, English-only) or `bge-m3` (~280MB, multilingual). **Non-English users should use `bge-m3`** -- minilm is trained on English MS MARCO dataset only, resulting in degraded re-ranking quality for non-English fragments |
+| RERANKER_MODEL | minilm | ONNX model for in-process reranking. `minilm` (default, ~80MB, English-only) or `bge-m3` (~280MB, multilingual). **Non-English users should use `bge-m3`** -- minilm is trained on English MS MARCO dataset only, resulting in degraded re-ranking quality for non-English fragments. `RERANKER_ENABLED` does not exist as a separate environment variable; the reranker activates automatically based on ONNX model preload success or `RERANKER_URL` being set |
 | FRAGMENT_DEFAULT_LIMIT | 5000 | Default fragment quota for new API keys (default: 5000, NULL=unlimited) |
 | ENABLE_RECONSOLIDATION | false | Enable ReconsolidationEngine. When true, tool_feedback and contradicts detection dynamically update fragment_links weight/confidence |
 | ENABLE_SPREADING_ACTIVATION | false | Enable SpreadingActivation. When true, the contextText parameter in recall proactively activates related fragments. Recommended to measure latency impact before enabling |
 | ENABLE_PATTERN_ABSTRACTION | false | Enable pattern abstraction. Planned for activation after sufficient data accumulation (not yet implemented) |
-| MEMENTO_REMEMBER_ATOMIC | false | When true, atomizes the quota check + INSERT in remember() into a single transaction. Sequence: BEGIN → api_keys FOR UPDATE (quota re-validation) → INSERT → COMMIT, fully eliminating TOCTOU. The R12 hotfix in v2.10.1 resolved a TDZ bug; the atomic path now works correctly. false (default) performs only a pre-check and is appropriate for environments with low concurrent request volume |
+| MEMENTO_REMEMBER_ATOMIC | false | When true, atomizes the quota check + INSERT in remember() into a single transaction. Sequence: BEGIN → api_keys FOR UPDATE (quota re-validation) → INSERT → COMMIT, fully eliminating TOCTOU. false (default) performs only a pre-check and is appropriate for environments with low concurrent request volume |
 
-#### CLI Remote Access (v2.12.0 M1)
+#### CLI Remote Access
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | MEMENTO_CLI_REMOTE | (none) | Remote MCP server URL used when the CLI `--remote` flag is not specified. Example: `https://memento.anchormind.net/mcp` |
 | MEMENTO_CLI_KEY | (none) | API key for remote server authentication, used when the CLI `--key` flag is not specified |
 
-#### Symbolic Memory (v2.8.0, opt-in)
+#### Symbolic Memory (opt-in)
 
-All flags default to `false` / noop. With default values, behavior must be identical to v2.7.0. For phased activation, follow the recommended order in the CHANGELOG.md v2.8.0 Migration Guide.
+All flags default to `false` / noop. For phased activation, follow the recommended order in the CHANGELOG.md Symbolic Memory Migration Guide.
 
 | Variable | Default | Phase | Description |
 |----------|---------|-------|-------------|
@@ -70,7 +69,7 @@ All flags default to `false` / noop. With default values, behavior must be ident
 
 The `api_keys.symbolic_hard_gate` column (migration-033) enables per-key hard gate switching. Defaults to false. When set to true, PolicyRules violations cause the remember() call to be rejected with a JSON-RPC **protocol-level** error `-32003` (not an MCP tool error — `error.data.violations: string[]` included). Master keys (keyId=NULL) are excluded. Cache TTL is 30 seconds.
 
-#### LLM Provider Fallback Chain (v2.8.0)
+#### LLM Provider Fallback Chain
 
 Automatic fallback to 15 providers beyond Gemini CLI. Existing behavior is fully preserved with default settings.
 
@@ -447,7 +446,7 @@ EMBEDDING_DIMENSIONS=1024
 
 ---
 
-### Local Transformers Embedding (v2.9.0)
+### Local Transformers Embedding
 
 > Generates embeddings locally without an API key. Uses the `@huggingface/transformers` library and runs on CPU alone without a GPU.
 
@@ -697,14 +696,14 @@ Run `npm run migrate` to execute unapplied migrations in order. History is manag
 | 028 | migration-028-composite-indexes.sql | Composite indexes: (agent_id, topic, created_at DESC) for topic fallback search optimization, (key_id, agent_id, importance DESC) WHERE valid_to IS NULL for API key isolation query optimization. Replaces migration-016's idx_frag_agent_topic |
 | 030 | migration-030-search-param-thresholds-key-text.sql | search_param_thresholds.key_id type INTEGER->TEXT conversion. Fixes bug where SearchParamAdaptor adaptive learning was broken after fragments.key_id changed to TEXT(UUID) in migration-027. Preserves existing sentinel -1 as '-1' string |
 | 031 | migration-031-content-hash-per-key.sql | Drops global UNIQUE index (idx_frag_hash) on content_hash, replaces with 2 partial unique indexes to block cross-tenant ON CONFLICT paths. Master-only (key_id IS NULL) `uq_frag_hash_master`, API key (key_id IS NOT NULL) composite `uq_frag_hash_per_key` |
-| 032 | migration-032-fragment-claims.sql | Symbolic Memory Layer fragment_claims table (v2.8.0) |
-| 033 | migration-033-symbolic-hard-gate.sql | api_keys.symbolic_hard_gate BOOLEAN (v2.8.0) |
-| 034 | migration-034-api-keys-default-mode.sql | api_keys.default_mode TEXT NULL — per-key Mode preset default (v2.9.0) |
-| 035 | migration-034-v2.16.0-bundle-fragments-affect.sql | fragments.affect TEXT DEFAULT 'neutral' CHECK 6-enum (v2.9.0) |
+| 032 | migration-032-fragment-claims.sql | Symbolic Memory Layer fragment_claims table |
+| 033 | migration-033-symbolic-hard-gate.sql | api_keys.symbolic_hard_gate BOOLEAN (symbolic hard gate opt-in) |
+| 034 | migration-034-api-keys-default-mode.sql | api_keys.default_mode TEXT NULL — per-key Mode preset default |
+| 035 | migration-034-v2.16.0-bundle-fragments-affect.sql | fragments.affect TEXT DEFAULT 'neutral' CHECK 6-enum |
 
 ---
 
-## Mode Preset Configuration (v2.9.0)
+## Mode Preset Configuration
 
 Locks the session operation scope to a preset. Three configuration paths are available, applied in the following priority order:
 
@@ -716,20 +715,20 @@ Locks the session operation scope to a preset. Three configuration paths are ava
 |--------|-------------|-------------------------------|---------------------|
 | `recall-only` | Read-only. Write tools blocked | remember, batch_remember, amend, forget, link, reflect, memory_consolidate | Shared API keys with read-only grants; read-only dashboard integrations |
 | `write-only` | Write-only. Search tools blocked | recall, context, reconstruct_history, graph_explore, fragment_history, search_traces, memory_stats | CI/cron jobs that only record results. Minimizes token consumption by hiding unnecessary retrieval tools |
-| `onboarding` | New-user guidance. All tools exposed + beginner guide injected | (none — excluded_tools: []) | Auto-entered when fragment count is below 50; automatically transitions to normal mode once that threshold is exceeded |
+| `onboarding` | New-user guidance. All tools exposed + beginner guide injected | (none — excluded_tools: []) | Auto-entered when fragment count is below 50; automatically transitions to normal mode once the threshold is exceeded |
 | `audit` | Audit/compliance. Master key only. All writes blocked | remember, batch_remember, amend, forget, link, reflect | Operational audits, history reconstruction, memory statistics. `requiresMaster: true` |
 
 Each preset's `fixed_tools` (explicit exposure list), `skill_guide_override` (tool guide override), and `requiresMaster` fields are defined in `lib/memory/modes/<preset>.json`.
 
 When mode is unset or NULL, only the existing RBAC-based permission system applies.
 
-See also: [API Reference — Mode Preset](api-reference.en.md#mode-preset-v290)
+See also: [API Reference — Mode Preset](api-reference.en.md#mode-preset)
 
 ---
 
 ## MCP Connection Settings
 
-### Token-Based Session Reuse (v2.9.0)
+### Token-Based Session Reuse
 
 Even if a client reconnects without `Mcp-Session-Id`, the server automatically recovers the existing session as long as the same Bearer token is presented. Useful when a session ID is lost or when reconnecting after a network interruption.
 
@@ -777,4 +776,4 @@ npm run test:ci          # npm test + test:e2e
 - [Local Embedding Setup](embedding-local.md) — Detailed switching procedure for `EMBEDDING_PROVIDER=transformers`
 - [Integration/E2E Tests](../tests/integration/README.md) — Test environment setup and execution
 - [API Reference](api-reference.en.md) — MCP tool parameters and Mode preset details
-- [Architecture](architecture.en.md) — New component dependencies and DB schema
+- [Architecture](architecture.en.md) — Component dependencies and DB schema

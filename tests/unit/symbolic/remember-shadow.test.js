@@ -27,8 +27,11 @@ import assert from "node:assert/strict";
 /** redis 큐 push 를 no-op 으로 */
 mock.module("../../../lib/redis.js", {
   namedExports: {
-    pushToQueue: mock.fn(async () => {}),
-    redisClient: null,
+    pushToQueue       : mock.fn(async () => {}),
+    pushToQueuePriority: mock.fn(async () => {}),
+    redisClient       : null,
+    cacheDocument     : mock.fn(async () => {}),
+    getCachedDocument : mock.fn(async () => null),
   }
 });
 
@@ -157,7 +160,7 @@ const makeDeps = () => ({
   },
   morphemeIndex: {
     tokenize                : async () => [],
-    getOrRegisterEmbeddings : async () => ({}),
+    getOrRegisterEmbeddings : async () => [],
   },
   search: null,
 });

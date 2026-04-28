@@ -56,10 +56,14 @@ function makeMockFactory() {
 function makeMockPool(overrides = {}) {
   return {
     connect: async () => ({
-      query  : async (sql) => {
-        if (typeof overrides.query === "function") return overrides.query(sql);
-        /** INSERT ... RETURNING id */
-        if (sql.includes("RETURNING id")) return { rows: [{ id: `db-${Date.now()}` }] };
+      query  : async (sql, params) => {
+        if (typeof overrides.query === "function") return overrides.query(sql, params);
+        /** multi-row INSERT ... RETURNING id: params 길이를 24컬럼 stride로 나눠 rows 생성 */
+        if (sql.includes("RETURNING id")) {
+          const COLS = 24;
+          const rowCount = params ? Math.max(1, Math.ceil(params.length / COLS)) : 1;
+          return { rows: Array.from({ length: rowCount }, (_, i) => ({ id: `db-${Date.now()}-${i}` })) };
+        }
         return { rows: [], rowCount: 0 };
       },
       release: () => {}
