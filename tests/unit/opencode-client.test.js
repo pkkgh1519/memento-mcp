@@ -31,9 +31,9 @@ function createProcess(stdoutText, exitCode = 0) {
 }
 
 describe("runOpenCodeCLI", () => {
-  it("opencode run --help로 확인한 flag만 CLI 호출에 포함한다", async () => {
+  it("opencode run --help로 확인한 flag만 CLI 호출에 포함하고 미지원 variant는 생략한다", async () => {
     execFileMock.mock.mockImplementationOnce((_cmd, _args, _opts, callback) => {
-      callback(null, "--agent\n--dir\n--pure\n--variant\n", "");
+      callback(null, "--agent\n--dir\n--pure\n", "");
     });
     spawnMock.mock.mockImplementationOnce(() => createProcess("{\"ok\":true}"));
 
@@ -54,7 +54,6 @@ describe("runOpenCodeCLI", () => {
       "--pure",
       "--model", "github-copilot/claude-sonnet-4.5",
       "--agent", "general",
-      "--variant", "high",
       "payload"
     ]);
     assert.equal(options.cwd, undefined);
