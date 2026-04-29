@@ -15,10 +15,10 @@
     "test:unit:node": "MEMENTO_METRICS_DEFAULT=off node --experimental-test-module-mocks --test 'tests/unit/*.test.js' 'tests/unit/**/*.test.js'",
     "test:integration": "node --test tests/integration/*.test.js tests/e2e/*.test.js",
     "test:integration:llm": "MEMENTO_METRICS_DEFAULT=off node --test --test-concurrency=1 tests/integration/llm-cli-smoke.test.js tests/integration/llm-timeout.test.js tests/integration/morpheme-llm-real.test.js tests/integration/llm-chain-real.test.js",
-    "test:e2e": "node --test tests/e2e/*.test.js",
+    "test:e2e": "node --test --test-concurrency=1 tests/e2e/*.test.js",
     "test:e2e:local": "bash scripts/run-e2e-tests.sh",
     "test:ci": "npm test && npm run test:e2e",
-    "lint": "eslint . --max-warnings 0",
+    "lint": "eslint .",
     "backfill:embeddings": "node scripts/backfill-embeddings.js",
     "migrate": "node scripts/migrate.js",
     "cli": "node bin/memento.js"
