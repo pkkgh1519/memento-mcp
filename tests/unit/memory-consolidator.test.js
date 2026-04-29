@@ -204,3 +204,51 @@ describe("MemoryConsolidator 인스턴스", () => {
     }
   });
 });
+
+describe("MemoryConsolidator 순차 실행", () => {
+
+  it("동시 consolidate 호출을 FIFO로 직렬화한다", async () => {
+    const c = new MemoryConsolidator();
+    const started = [];
+    let active = 0;
+    let maxActive = 0;
+    const originalNow = Date.now;
+    let now = 1_000_000;
+
+    Date.now = () => now;
+
+    try {
+      c._runConsolidationCycle = async (marker) => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        started.push(marker.name);
+        now += marker.name === "first" ? 20 : 5;
+        active -= 1;
+        return { marker: marker.name, stages: [] };
+      };
+
+      function first() {}
+      function second() {}
+      function third() {}
+
+      const results = await Promise.all([
+        c.consolidate(first),
+        c.consolidate(second),
+        c.consolidate(third)
+      ]);
+
+      assert.deepStrictEqual(started, ["first", "second", "third"]);
+      assert.strictEqual(maxActive, 1);
+      assert.deepStrictEqual(results.map(r => r.marker), ["first", "second", "third"]);
+      assert.strictEqual(results[0].queued, false);
+      assert.strictEqual(results[1].queued, true);
+      assert.strictEqual(results[2].queued, true);
+      assert.deepStrictEqual(
+        results.map(r => r.queueWaitMs),
+        [0, 20, 25]
+      );
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+});
